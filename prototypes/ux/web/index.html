@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Nexus</title>
+  <link rel="stylesheet" href="node_modules/@xterm/xterm/css/xterm.css">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header id="topbar">
+    <div class="brand">Nexus <span class="proto">UX prototype</span></div>
+    <nav id="spaces"></nav>
+    <div class="spacer"></div>
+    <div id="toolbar"></div>
+  </header>
+  <main id="main">
+    <aside id="chat">
+      <div id="chat-log"></div>
+      <div id="chat-ctx"></div>
+      <form id="chat-form">
+        <textarea id="chat-input" rows="3" placeholder="Talk to the agent. Enter to send, Shift+Enter for a new line."></textarea>
+        <div class="chat-actions">
+          <span id="agent-name"></span>
+          <button type="button" id="chat-stop" hidden>Stop</button>
+          <button type="submit" id="chat-send">Send</button>
+        </div>
+      </form>
+    </aside>
+    <div id="chat-resizer"></div>
+    <section id="workspace">
+      <div id="layout"></div>
+      <div id="pane-layer"></div>
+      <div id="drop-hint" hidden></div>
+    </section>
+  </main>
+  <div id="modal-root"></div>
+  <div id="toasts"></div>
+  <script type="module" src="dist/app.js"></script>
+</body>
+</html>

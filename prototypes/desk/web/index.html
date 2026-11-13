@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Nexus</title>
+  <link rel="stylesheet" href="node_modules/@xterm/xterm/css/xterm.css">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header id="topbar">
+    <div class="brand">Nexus <span class="proto">desk prototype</span></div>
+    <nav id="tabs"></nav>
+    <div class="spacer"></div>
+    <div id="toolbar"></div>
+    <div id="running"></div>
+    <button id="capture-btn" title="Capture a thought (Ctrl+Shift+Space)">+ Capture</button>
+  </header>
+  <main id="main">
+    <section id="home-view">
+      <div id="dash">
+        <div class="dash-head" id="dash-head">
+          <div><h2 id="dash-date"></h2><div class="muted" id="dash-summary"></div></div>
+          <div id="capture-slot"></div>
+        </div>
+        <div id="dash-body"></div>
+        <section class="dsec widgets" id="dash-widgets" hidden></section>
+      </div>
+      <aside id="home-chat-slot" class="chat-slot"></aside>
+    </section>
+    <section id="project-view" hidden>
+      <aside id="rail"></aside>
+      <section id="workspace">
+        <div id="layout"></div>
+        <div id="pane-layer"></div>
+        <div id="drop-hint" hidden></div>
+      </section>
+      <aside id="project-chat-slot" class="chat-slot"></aside>
+    </section>
+  </main>
+  <div id="modal-root"></div>
+  <div id="toasts"></div>
+  <script type="module" src="dist/app.js"></script>
+</body>
+</html>

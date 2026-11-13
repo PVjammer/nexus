@@ -1,0 +1,5 @@
+# Shim: webview_go asks for webkit2gtk-4.0; Ubuntu 24.04+ ships 4.1 only.
+Name: webkit2gtk-4.0
+Description: shim to webkit2gtk-4.1
+Version: 2.44.0
+Requires: webkit2gtk-4.1

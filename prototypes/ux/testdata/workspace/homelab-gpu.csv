@@ -1,0 +1,5 @@
+Option,Price (USD),VRAM (GB),Power (W),Noise,Notes
+2x used RTX 3090,1500,48,700,loud,needs a bigger PSU
+1x RTX 5090,2000,32,575,medium,new; warranty
+1x RTX 4090 (used),1600,24,450,medium,
+Mac Studio M4 Max,3500,128 (unified),150,quiet,different stack

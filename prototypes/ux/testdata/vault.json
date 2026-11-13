@@ -1,0 +1,5 @@
+[
+  {"name": "Home Wi-Fi", "kind": "password", "value": "CANARY-WIFI-7f3a91"},
+  {"name": "Passport number", "kind": "document-number", "value": "CANARY-PASS-b2c4d6"},
+  {"name": "GitHub recovery code", "kind": "recovery-code", "value": "CANARY-RECOV-e8f0a2"}
+]
