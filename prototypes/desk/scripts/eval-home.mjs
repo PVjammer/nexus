@@ -1,5 +1,5 @@
-// Eval: can a given model arrange the home screen from plain requests, with
-// the home-layout skill and the home_* tools? Each case starts a fresh core
+// Eval: can a given model arrange the home screen and track work from plain
+// requests, with the home-layout and tasks skills and their tools? Each case starts a fresh core
 // (pi + the model) with its own data dir, sets a starting layout, sends the
 // request(s) to the home agent and checks the layout afterwards. One case
 // checks the opposite: a plain question must not change the screen.
@@ -18,6 +18,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const TURN_TIMEOUT = Number(process.env.TURN_TIMEOUT || 300) * 1000;
 
 const kinds = (l) => (l.widgets || []).map((w) => w.kind);
+const wt = (d) => d.desk.workTasks || [];
 const find = (l, k) => (l.widgets || []).find((w) => w.kind === k);
 const cases = [
   { name: "add-needs", start: "prompt", say: ["Put what needs me on my home screen, right under this box."],
@@ -26,10 +27,10 @@ const cases = [
     check: (l) => !find(l, "inbox") && kinds(l).length === 5 },
   { name: "two-columns", start: "dashboard", say: ["Make my home screen two columns."],
     check: (l) => l.cols === 2 && kinds(l).length === 6 },
-  { name: "scope-project", start: "dashboard", say: ["In the workstreams widget, only show the Demo project."],
-    check: (l) => find(l, "workstreams")?.scope === "p:demo" },
-  { name: "tasks-board", start: "prompt", say: ["I want my tasks on my home screen as a board."],
-    check: (l) => find(l, "tasks")?.shape === "board" },
+  { name: "scope-project", start: "dashboard", say: ["In the work items widget, only show the Demo project."],
+    check: (l) => find(l, "workitems")?.scope === "p:demo" },
+  { name: "tasks-board", start: "prompt", say: ["I want my task board on my home screen."],
+    check: (l) => find(l, "board")?.shape === "board" },
   { name: "compact-short", start: "dashboard", say: ["Make the needs-you list compact and only two rows tall."],
     check: (l) => find(l, "needs")?.shape === "compact" && find(l, "needs")?.h === 2 },
   { name: "tile-running", start: "prompt", say: ["Fill the screen like tiles, and put what's running on it."],
@@ -39,7 +40,15 @@ const cases = [
   { name: "undo", start: "dashboard", say: ["Remove the projects widget from my home screen.", "Actually, undo that."],
     check: (l) => !!find(l, "projects") },
   { name: "question-only", start: "dashboard", say: ["What needs me right now?"],
-    check: (l, before, reply) => JSON.stringify(l) === JSON.stringify(before) && reply.trim().length > 0, why: "a question must not change the screen" },
+    check: (l, before, reply) => JSON.stringify(l) === JSON.stringify(before) && /date/i.test(reply), why: "a question must not change the screen, and the answer must include the foreman question waiting on the user (Which date?)" },
+  // tasks skill (work_* tools)
+  // Asking "want me to add these?" first is fine (cowork); after a yes, the steps must be on the board.
+  { name: "break-down", start: "prompt", say: ["Break the demo-ws workstream down into the next few concrete steps.", "Yes, put them on the board."],
+    check: (l, before, reply, d) => { const n = wt(d).filter((t) => t.item === "ws:demo/demo-ws").length; return n >= 1 && n <= 8 && JSON.stringify(l) === JSON.stringify(before); }, why: "the steps must land on the board (the scratch workstream only 'needs a date', so one task is a fair breakdown)" },
+  { name: "waiting-on", start: "prompt", say: ["On demo-ws I'm waiting on IT to grant API access."],
+    check: (l, b, r, d) => wt(d).some((t) => t.item === "ws:demo/demo-ws" && /\bIT\b/i.test(t.assignee) && t.status !== "done") },
+  { name: "park", start: "prompt", say: ["Park demo-ws until the release date is decided."],
+    check: (l, b, r, d) => (d.workItems || []).some((w) => w.ref === "ws:demo/demo-ws" && w.state === "parked") },
 ].filter((c) => !only.length || only.includes(c.name));
 
 const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
@@ -86,7 +95,7 @@ for (const c of cases) {
     res.tools = msgs.filter((m) => m.role === "tool").map((m) => (m.error ? "✗" : "") + m.tool);
     res.errors = msgs.filter((m) => m.role === "tool" && m.error).length;
     res.reply = msgs.filter((m) => m.role === "agent").map((m) => m.text).join(" ").replace(/\s+/g, " ").slice(0, 160);
-    res.ok = !res.note && !!c.check(l, before, res.reply);
+    res.ok = !res.note && !!c.check(l, before, res.reply, desk);
     if (!res.ok && !res.note) res.note = `layout: cols ${l.cols}, ${l.tiling}, ${(l.widgets || []).map((w) => `${w.kind}(${w.shape}${w.scope ? " " + w.scope : ""}${w.h ? " h" + w.h : ""})`).join(", ")}`;
     ws.close();
   } catch (e) { res.note = String(e); }

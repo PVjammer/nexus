@@ -18,6 +18,7 @@ export type PaneView = {
 export { md } from "./md";
 import { md } from "./md";
 import { ChatPanel } from "./chat";
+import { workItemView } from "./work";
 
 // ---- shared frame ----
 
@@ -66,10 +67,23 @@ export function createPane(p: Pane): PaneView {
     case "secure-view": return secureViewPane(p);
     case "secret-input": return secretInputPane(p);
     case "task": return taskPane(p);
+    case "workitem": return workItemPane(p);
   }
   const f = frame(p);
   f.body.append(h("div", { class: "pad muted" }, `Unknown pane kind ${p.kind}`));
   return basic(f);
+}
+
+// ---- a work item: its tasks and done-when, with one task docked ----
+
+function workItemPane(p: Pane): PaneView {
+  const f = frame(p);
+  f.tools.append(h("span", { class: "muted small" }, "Work item · tasks live only in Nexus"));
+  const v = workItemView(String(p.props.ref), p.props.task ? String(p.props.task) : undefined);
+  f.body.classList.add("pad");
+  f.body.append(v.el);
+  let task = p.props.task;
+  return { el: f.el, update: (np) => { f.setVis(np); if (np.props.task !== task) { task = np.props.task; v.focus(String(task || "")); } }, destroy: v.destroy };
 }
 
 // ---- markdown / html (agent-made content) ----

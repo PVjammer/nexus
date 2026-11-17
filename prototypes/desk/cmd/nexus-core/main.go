@@ -35,7 +35,7 @@ func (m *multi) Set(v string) error { *m = append(*m, v); return nil }
 // instructions and session directory.
 type piFactory struct {
 	bin, model, builtins, addr, dataDir, ext, piDir string
-	byKind                                         map[string]string // agent kind -> "provider/id[:thinking]"
+	byKind                                          map[string]string // agent kind -> "provider/id[:thinking]"
 }
 
 func (f piFactory) modelFor(kind string) string {
@@ -67,7 +67,7 @@ func (f piFactory) Start(ctx context.Context, s app.RunSpec) (agent.Backend, err
 	}
 	p := agent.NewPi(agent.PiConfig{
 		Continue: len(prior) > 0, // an agent that was stopped picks up where it left off
-		Binary: f.bin, Model: f.modelFor(s.Kind), Extension: f.ext,
+		Binary:   f.bin, Model: f.modelFor(s.Kind), Extension: f.ext,
 		SystemExtra:  sys,
 		SessionDir:   sessDir,
 		WorkDir:      s.WorkDir,

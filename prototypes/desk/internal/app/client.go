@@ -243,6 +243,12 @@ func (a *App) handleClient(c *client, m map[string]any, raw []byte) {
 	// ---- widgets and the home screen ----
 	case "widgetRemove":
 		a.Desk.RemoveWidget(str(m["widget"]))
+	case "workTaskAdd", "workTaskUpdate", "workTaskRemove", "workItemSet":
+		if v, err := a.handleWork(t, m); err != nil {
+			fail(err)
+		} else {
+			reply(map[string]any{"t": "ok", "result": v})
+		}
 	case "homeAdd", "homeChange", "homeRemove", "homeGrid", "homeReset", "homeUndo":
 		if err := a.handleHome(t, m); err != nil {
 			fail(err)
@@ -309,6 +315,14 @@ func (a *App) handleClient(c *client, m map[string]any, raw []byte) {
 		}
 		if p.Kind == "task" {
 			if ex, ok := a.Store.FindPaneIn(space, "task", "task", str(p.Props["task"])); ok {
+				a.Store.Activate(ex.ID)
+				return
+			}
+		}
+		if p.Kind == "workitem" {
+			if ex, ok := a.Store.FindPaneIn(space, "workitem", "ref", str(p.Props["ref"])); ok {
+				task := str(p.Props["task"])
+				a.Store.UpdatePane(ex.ID, you, func(q *store.Pane) error { q.Props["task"] = task; return nil })
 				a.Store.Activate(ex.ID)
 				return
 			}

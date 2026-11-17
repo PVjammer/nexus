@@ -73,6 +73,37 @@ type Widget struct {
 	Wide   bool   `json:"wide,omitempty"`
 }
 
+// WorkTask is a task: a concrete next action toward a work item, or a plain
+// todo (Item == ""). Tasks live only in Nexus; they're never written to the
+// work item's source. Status is the usual board: todo, doing, blocked,
+// review, done.
+type WorkTask struct {
+	ID        string    `json:"id"`
+	Item      string    `json:"item,omitempty"` // work item ref ("" = a todo)
+	Project   string    `json:"project,omitempty"`
+	Title     string    `json:"title"`
+	Status    string    `json:"status"`             // todo | doing | blocked | review | done
+	Assignee  string    `json:"assignee"`           // you | agent | someone's name
+	Reviewer  string    `json:"reviewer,omitempty"` // who reviews it in "review"
+	BlockedBy []string  `json:"blockedBy,omitempty"`
+	Due       string    `json:"due,omitempty"` // YYYY-MM-DD
+	Note      string    `json:"note,omitempty"`
+	By        string    `json:"by"` // who added it: you | agent
+	Why       string    `json:"why,omitempty"`
+	Created   time.Time `json:"created"`
+	Updated   time.Time `json:"updated"`
+}
+
+// Tracked is what Nexus keeps about a work item it reads from a source:
+// whether it's in progress, parked (and on what), and when it's done.
+type Tracked struct {
+	Ref      string    `json:"ref"`
+	State    string    `json:"state,omitempty"` // in-progress | parked | not-started
+	ParkNote string    `json:"parkNote,omitempty"`
+	DoneWhen []string  `json:"doneWhen,omitempty"`
+	Updated  time.Time `json:"updated"`
+}
+
 // LayoutWidget is one widget on a screen: what it shows (Kind, from the
 // catalog the app keeps), how (Shape), for what (Scope) and its size. A widget
 // is data, so you and the agent change it the same way.
@@ -116,13 +147,15 @@ type undoEntry struct {
 }
 
 type State struct {
-	Captures  []*Capture         `json:"captures"`
-	Items     []*Item            `json:"items"`
-	Tasks     []*Task            `json:"tasks"`
-	Widgets   []*Widget          `json:"widgets,omitempty"` // legacy; migrated into Layouts["home"]
-	Layouts   map[string]*Layout `json:"layouts"`           // "home" (project dashboards later)
-	Dismissed map[string]bool    `json:"dismissed"`         // foreman inbox ids you cleared in Nexus
-	Seq       int                `json:"seq"`
+	Captures  []*Capture          `json:"captures"`
+	Items     []*Item             `json:"items"`
+	Tasks     []*Task             `json:"tasks"`
+	Widgets   []*Widget           `json:"widgets,omitempty"` // legacy; migrated into Layouts["home"]
+	Layouts   map[string]*Layout  `json:"layouts"`           // "home" (project dashboards later)
+	WorkTasks []*WorkTask         `json:"workTasks"`
+	Tracked   map[string]*Tracked `json:"tracked"`   // by work item ref
+	Dismissed map[string]bool     `json:"dismissed"` // foreman inbox ids you cleared in Nexus
+	Seq       int                 `json:"seq"`
 }
 
 type Store struct {
@@ -144,6 +177,9 @@ func Open(path string) (*Store, error) {
 		s.st.Dismissed = map[string]bool{}
 	}
 	s.undo = map[string][]undoEntry{}
+	if s.st.Tracked == nil {
+		s.st.Tracked = map[string]*Tracked{}
+	}
 	if s.st.Layouts == nil {
 		s.st.Layouts = map[string]*Layout{}
 	}
@@ -487,6 +523,116 @@ func (s *Store) RemoveWidget(id string) {
 		}
 		return nil
 	})
+}
+
+// ---- work tasks ----
+
+func (s *Store) AddWorkTask(t WorkTask) WorkTask {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t.ID, t.Created, t.Updated = s.id("k"), time.Now(), time.Now()
+	s.st.WorkTasks = append(s.st.WorkTasks, &t)
+	s.settleLocked()
+	s.commitLocked()
+	return t
+}
+
+func (s *Store) WorkTask(id string) (WorkTask, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, t := range s.st.WorkTasks {
+		if t.ID == id {
+			return *t, true
+		}
+	}
+	return WorkTask{}, false
+}
+
+// UpdateWorkTask changes a task; f's error leaves it untouched. Tasks that
+// were blocked only on finished tasks move on (settle).
+func (s *Store) UpdateWorkTask(id string, f func(*WorkTask) error) (WorkTask, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, t := range s.st.WorkTasks {
+		if t.ID == id {
+			c := *t
+			if err := f(&c); err != nil {
+				return *t, err
+			}
+			c.Updated = time.Now()
+			*t = c
+			s.settleLocked()
+			s.commitLocked()
+			return *t, nil
+		}
+	}
+	return WorkTask{}, fmt.Errorf("no task %s", id)
+}
+
+func (s *Store) RemoveWorkTask(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i, t := range s.st.WorkTasks {
+		if t.ID == id {
+			s.st.WorkTasks = append(s.st.WorkTasks[:i], s.st.WorkTasks[i+1:]...)
+			for _, o := range s.st.WorkTasks {
+				o.BlockedBy = remove(o.BlockedBy, id)
+			}
+			s.settleLocked()
+			s.commitLocked()
+			return
+		}
+	}
+}
+
+func remove(l []string, v string) []string {
+	var out []string
+	for _, x := range l {
+		if x != v {
+			out = append(out, x)
+		}
+	}
+	return out
+}
+
+// settleLocked moves a blocked task to "todo" once everything it waits on is
+// done (or gone). Blocked tasks with no BlockedBy wait on something outside
+// Nexus and stay blocked until someone moves them.
+func (s *Store) settleLocked() {
+	byID := map[string]*WorkTask{}
+	for _, t := range s.st.WorkTasks {
+		byID[t.ID] = t
+	}
+	for _, t := range s.st.WorkTasks {
+		if t.Status != "blocked" || len(t.BlockedBy) == 0 {
+			continue
+		}
+		open := false
+		for _, b := range t.BlockedBy {
+			if o := byID[b]; o != nil && o.Status != "done" {
+				open = true
+			}
+		}
+		if !open {
+			t.Status, t.Updated = "todo", time.Now()
+		}
+	}
+}
+
+// ---- tracked work items ----
+
+func (s *Store) Track(ref string, f func(*Tracked)) Tracked {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t := s.st.Tracked[ref]
+	if t == nil {
+		t = &Tracked{Ref: ref}
+		s.st.Tracked[ref] = t
+	}
+	f(t)
+	t.Updated = time.Now()
+	s.commitLocked()
+	return *t
 }
 
 // ---- dismissals ----

@@ -121,6 +121,26 @@ await sleep(300);
 ok("dashboard preset keeps the custom widget", home().length === 7 && home().some((w) => w.plugin === "glance"), JSON.stringify(home().map((w) => w.kind)));
 ok("the catalog reaches the shell", desk.homeKinds?.some((k) => k.kind === "needs" && k.shapes.includes("compact")));
 
+console.log("tasks (work items from their sources, tasks only in Nexus)");
+const wi = () => desk.workItems || [];
+ok("the open foreman workstream is an in-progress work item", wi().some((w) => w.ref === "ws:demo/demo-ws" && w.state === "in-progress"));
+ok("backlog lines are work items not started", wi().filter((w) => w.source === "foreman backlog" && w.state === "not-started").length >= 1);
+r = await call("p:demo", "work_task_add", { item: "ws:demo/demo-ws", title: "Grant API access", assignee: "IT", status: "doing", reason: "e2e" });
+const kIT = r.text.match(/added (k\d+)/)?.[1];
+r = await call("p:demo", "work_task_add", { item: "ws:demo/demo-ws", title: "Test live", blocked_by: [kIT], reason: "e2e" });
+await sleep(300);
+const ws1 = () => wi().find((w) => w.ref === "ws:demo/demo-ws");
+ok("the project agent adds tasks; whose move is someone else's", !r.isError && ws1()?.move === "waiting", JSON.stringify(ws1()));
+send({ t: "workTaskUpdate", id: kIT, status: "done", space: "" });
+await sleep(300);
+ok("finishing a task unblocks the next, and it's yours", ws1()?.move === "you" && desk.needs.some((n) => n.source === "work" && n.title === "Test live"));
+ok("…and nothing was written into the project", !fs.readFileSync(path.join(scratch, "proj", ".foreman", "backlog.md"), "utf8").includes("Test live"));
+send({ t: "workItemSet", item: "ws:demo/demo-ws", state: "parked", parkNote: "until Q1", space: "" });
+await sleep(300);
+ok("parking hides its tasks from needs-you", ws1()?.state === "parked" && !desk.needs.some((n) => n.source === "work" && n.title === "Test live"));
+r = await call("p:demo", "pane_open", { kind: "workitem", item: "ws:demo/demo-ws" });
+ok("the project agent can open the work item in its workspace", !r.isError, r.text);
+
 console.log("project wiki");
 r = await call("p:demo", "wiki_write", { page: "index", content: "# Demo\n\nWhat this is: a scratch project.\n\n## Pages\n- [[plan]]: the plan\n", summary: "front page", sources: ["demo/README.md"] });
 ok("project agent writes the wiki index", !r.isError, r.text);

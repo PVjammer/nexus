@@ -32,7 +32,10 @@ var widgetKinds = []WidgetKind{
 	{Kind: "chat", Label: "Agent", Shows: "a conversation with an agent: the home agent, or a project's agent when narrowed to that project", Shapes: []string{"minimal", "conversation"}, Scoped: true, DefaultW: 4},
 	{Kind: "needs", Label: "Needs you", Shows: "everything waiting on the user: foreman questions and reports, finished tasks, wiki proposals, filings to confirm", Shapes: []string{"list", "compact"}, Scoped: true, DefaultW: 2},
 	{Kind: "running", Label: "Running", Shows: "agents and foreman workstreams working right now", Shapes: []string{"list", "compact"}, Scoped: true, DefaultW: 1},
-	{Kind: "tasks", Label: "Tasks", Shows: "tasks dispatched to background agents (drafts, running, finished)", Shapes: []string{"list", "board"}, Scoped: true, DefaultW: 2},
+	{Kind: "workitems", Label: "Work items", Shows: "work items in progress, with whose move it is, progress and the next task", Shapes: []string{"cards", "list"}, Scoped: true, DefaultW: 2},
+	{Kind: "board", Label: "Task board", Shows: "your tasks on the board (to do, in progress, blocked, in review, done)", Shapes: []string{"board", "list"}, Scoped: true, DefaultW: 3},
+	{Kind: "todos", Label: "Todos", Shows: "todos: tasks with no work item, with a box to add one", Shapes: []string{"list"}, DefaultW: 1},
+	{Kind: "tasks", Label: "Dispatched tasks", Shows: "background task agents you dispatched (drafts, running, finished)", Shapes: []string{"list", "board"}, Scoped: true, DefaultW: 2},
 	{Kind: "items", Label: "Items", Shows: "open items (tasks, notes, questions) in the user's projects", Shapes: []string{"list", "compact"}, Scoped: true, DefaultW: 1},
 	{Kind: "workstreams", Label: "Workstreams", Shows: "open foreman workstreams with their status", Shapes: []string{"list", "compact"}, Scoped: true, DefaultW: 2},
 	{Kind: "inbox", Label: "Inbox", Shows: "captures waiting to be filed, with the home agent's proposals", Shapes: []string{"list"}, DefaultW: 1},
@@ -356,7 +359,7 @@ func (a *App) homeReset(by, to, why string) error {
 			for _, s := range []struct {
 				kind, shape string
 				w           int
-			}{{"needs", "list", 2}, {"running", "list", 1}, {"inbox", "list", 1}, {"workstreams", "compact", 2}, {"projects", "cards", 3}} {
+			}{{"needs", "list", 2}, {"running", "list", 1}, {"workitems", "cards", 2}, {"inbox", "list", 1}, {"projects", "cards", 3}} {
 				l.Widgets = append(l.Widgets, &desk.LayoutWidget{ID: newID(), Kind: s.kind, Shape: s.shape, W: s.w, By: by, Why: why, Added: now})
 			}
 			l.Widgets = append(l.Widgets, plugins...)
@@ -483,7 +486,7 @@ func (a *App) homeTools() []Tool {
 				"cols": iprop("1-4"), "tiling": eprop("", "flow", "tile"), "reason": reason,
 			}), run: toolHomeGrid},
 		{Name: "home_reset", Label: "Reset home", Kinds: H,
-			Description: "Replace the whole home screen with a preset: 'prompt' (just the prompt box) or 'dashboard' (prompt, needs you, running, inbox, workstreams, projects). Plugin widgets stay with 'dashboard'.",
+			Description: "Replace the whole home screen with a preset: 'prompt' (just the prompt box) or 'dashboard' (prompt, needs you, running, work items, inbox, projects). Plugin widgets stay with 'dashboard'.",
 			Parameters:  obj([]string{"to", "reason"}, map[string]any{"to": eprop("", homePresets...), "reason": reason}), run: toolHomeReset},
 		{Name: "home_undo", Label: "Undo home change", Kinds: H,
 			Description: "Undo the last change to the home screen (yours or the user's). Use when the user says 'undo that' about the home screen.",

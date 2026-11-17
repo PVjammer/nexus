@@ -17,12 +17,13 @@ import (
 
 // skillsByKind says which skills each agent gets.
 var skillsByKind = map[string][]string{
-	KindHome: {"home-layout"},
+	KindHome:    {"home-layout", "tasks"},
+	KindProject: {"tasks"},
 }
 
 // skillVars fills {{name}} placeholders with text generated from the code.
 func skillVars() map[string]string {
-	return map[string]string{"catalog": strings.TrimSpace(homeCatalog())}
+	return map[string]string{"catalog": strings.TrimSpace(homeCatalog()), "statuses": strings.Join(taskStatuses, ", ")}
 }
 
 var frontmatter = regexp.MustCompile(`(?s)\A---\n.*?\n---\n`)

@@ -39,7 +39,8 @@ export type LayoutWidget = { id: string; kind: string; shape?: string; scope?: s
 export type Layout = { cols: number; tiling: "flow" | "tile"; widgets: LayoutWidget[] | null };
 export type WidgetKind = { kind: string; label: string; shows: string; shapes: string[]; scoped: boolean; defaultW: number; internal?: boolean };
 export type DeskState = {
-  desk: { captures: Capture[] | null; items: Item[] | null; tasks: Task[] | null; layouts: Record<string, Layout> | null; dismissed: Record<string, boolean> | null };
+  desk: { captures: Capture[] | null; items: Item[] | null; tasks: Task[] | null; layouts: Record<string, Layout> | null; dismissed: Record<string, boolean> | null; workTasks?: any[] | null };
+  workItems?: any[];
   homeKinds?: WidgetKind[]; homeUndo?: { depth: number; label: string };
   projects: Detail[] | null; needs: Need[] | null; running: Running[] | null;
   wikis?: Record<string, { pages: WikiPage[] | null; proposals: WikiProposal[] | null }>;

@@ -9,6 +9,7 @@ import { ic, kindIc } from "./icons";
 import { drawHome as drawHomeGrid, initHome, registerKind, setRedraw, startEditing, stopEditing, toastAgentChange, type WidgetCtx } from "./home";
 import { agentName, openChats, toggleChats } from "./chats";
 import { appsButton, initApps } from "./apps";
+import * as work from "./work";
 
 if (!token) {
   document.body.innerHTML = `<div style="padding:40px;font-family:system-ui">Missing token. Open the URL that <code>nexus-core</code> printed (it ends in <code>#token=…</code>), or run <code>make app</code>.</div>`;
@@ -177,12 +178,16 @@ function needCard(n: Need): HTMLElement {
     const propId = n.id.split(":").slice(2).join(":");
     acts.push(h("button", { class: "primary", onclick: () => reviewProposal(p.id, propId) }, "Review change"));
   }
+  if (n.source === "work" && n.task) {
+    acts.push(h("button", { class: "primary", onclick: () => work.openTask(n.task!) }, n.kind === "review" ? "Review" : "Open"));
+    acts.push(h("button", { onclick: () => request({ t: "workTaskUpdate", id: n.task, status: "done", space: "" }).catch((e) => toast(e.message, "error")) }, ic("check"), " Done"));
+  }
   if (n.source === "task" && p) {
     acts.push(h("button", { class: n.kind === "needs-input" ? "primary" : "", onclick: () => openIn(p.id, "task", { task: n.task }) }, n.kind === "needs-input" ? "Answer" : "Open task"));
     if (n.report) acts.push(h("button", { class: "primary", onclick: () => openIn(p.id, "review", { path: n.report }) }, ic("doc"), " Report"));
     acts.push(h("button", { onclick: () => send({ t: "taskReviewed", task: n.task }) }, ic("check"), " Done"));
   }
-  const kindTag = n.source === "foreman" ? `foreman · ${n.kind}` : n.source === "task" ? `task · ${statusLabel[n.kind || ""] || n.kind}` : n.source === "wiki" ? "wiki proposal" : "capture";
+  const kindTag = n.source === "foreman" ? `foreman · ${n.kind}` : n.source === "task" ? `task agent · ${statusLabel[n.kind || ""] || n.kind}` : n.source === "wiki" ? "wiki proposal" : n.source === "work" ? (n.detail === "todo" ? "todo" : `task · ${n.kind === "review" ? "review" : "yours"}`) : "capture";
   return h("div", { class: `card need src-${n.source} k-${n.kind || ""}` },
     h("div", { class: "card-top" }, h("b", {}, n.title), p ? h("span", { class: "tag" }, p.name) : "", h("span", { class: "muted small grow-r" }, `${kindTag} · ${ago(n.time)}`)),
     n.detail ? h("div", { class: "need-detail" }, n.detail) : "",
@@ -239,6 +244,7 @@ const tag = (pid?: string) => pid ? h("span", { class: "tag" }, project(pid)?.na
 
 function needOpen(n: Need): (() => void) | null {
   const p = n.project ? project(n.project) : undefined;
+  if (n.source === "work" && n.task) return () => work.openTask(n.task!);
   if (n.source === "task" && p) return () => openIn(p.id, "task", { task: n.task });
   if (n.report && p) return () => openIn(p.id, "review", { path: n.report });
   if (n.source === "wiki" && p) return () => reviewProposal(p.id, n.id.split(":").slice(2).join(":"));
@@ -303,6 +309,10 @@ registerKind("workstreams", { draw: (c) => {
   }
   return rows.length ? rows : [empty("No open foreman workstreams.")];
 } });
+
+registerKind("workitems", { draw: (c) => work.workItemCards(c.project, c.shape) });
+registerKind("board", { draw: (c) => c.shape === "list" ? work.boardList(c.project) : [work.board(c.project, { hideDone: true })] });
+registerKind("todos", { draw: () => work.todos() });
 
 registerKind("inbox", { draw: () => {
   const caps = (desk?.desk.captures || []).filter((c) => c.status === "new" || c.status === "proposed");
@@ -405,7 +415,8 @@ function drawRail() {
         h("button", { onclick: () => send({ t: "open", kind: "files", props: { path: p.id } }) }, ic("folder"), " Files"),
         h("button", { onclick: () => send({ t: "open", kind: "log" }) }, ic("log"), " Log"))),
     needs.length ? railSec("needs", "Needs you", needs.length, () => needs.map((n) => h("div", { class: "ritem need", onclick: () => {
-      if (n.task) send({ t: "open", kind: "task", props: { task: n.task } });
+      if (n.source === "work" && n.task) work.openTask(n.task);
+      else if (n.task) send({ t: "open", kind: "task", props: { task: n.task } });
       else if (n.report) send({ t: "open", kind: "review", props: { path: n.report } });
     } }, h("span", { class: `dot k-${n.kind}` }), h("span", { class: "grow" }, h("b", {}, n.title), h("div", { class: "muted small" }, n.detail || "")), h("span", { class: "muted small" }, ago(n.time))))) : null,
     railSec("tasks", "Tasks", tasks.filter((t) => !t.reviewed).length || "", () => [
@@ -556,7 +567,16 @@ document.addEventListener("keydown", (e) => {
 });
 $("capture-btn").addEventListener("click", captureModal);
 $("chats-btn").addEventListener("click", () => toggleChats());
-initApps({ openIn, openTasks: () => toast("The Tasks app is next in this build", "warn") });
+initApps({ openIn, openTasks: () => work.openTasksApp() });
+work.initWork({
+  openWorkspace: (ref, task) => {
+    if (ref.startsWith("open-report:")) { const path = ref.slice(12); openIn(path.split("/")[0], "review", { path }); return; }
+    const w = work.items().find((x) => x.ref === ref);
+    const p = w && project(w.project);
+    if (!w || !p) { toast("That work item isn't in a project Nexus knows", "warn"); return; }
+    openIn(p.id, "workitem", { ref, task: task || "" }, w.title);
+  },
+});
 $("apps-slot").append(appsButton());
 
 // ---------------- notifications and secure cards ----------------
@@ -638,6 +658,9 @@ connect();
 // opens the Chats panel (agents can point you at these too).
 const hashArgs = new URLSearchParams(location.hash.slice(1));
 if (hashArgs.has("customize")) on("desk", function once() { startEditing(); drawHome(); });
+if (hashArgs.has("project")) on("desk", () => { if (!(window as any)._projOpened && project(hashArgs.get("project")!)) { (window as any)._projOpened = true; go({ kind: "project", id: hashArgs.get("project")! }); } });
+if (hashArgs.has("tasks")) on("desk", () => { if (!(window as any)._tasksOpened) { (window as any)._tasksOpened = true; work.openTasksApp(hashArgs.get("tasks") || undefined); } });
+if (hashArgs.has("task")) on("desk", () => { if (!(window as any)._taskOpened) { (window as any)._taskOpened = true; work.openTask(hashArgs.get("task")!); } });
 if (hashArgs.has("chats")) on("desk", () => { if (!(window as any)._chatsOpened) { (window as any)._chatsOpened = true; openChats(hashArgs.get("chats") || undefined); } });
 (window as any).nexusProjectOfSpace = (sid: string) => projects().find((p) => p.space === sid)?.id || "";
 (window as any).nexusDebug = { app: () => app, desk: () => desk, views: allViews, md };

@@ -32,7 +32,7 @@ To refer to a widget, use its id from `home_show` (like `w12`). If there is exac
 - `h` is rows tall, 1 to 4. `0` means as tall as it needs (the default).
 - `position` is 1-based: 1 is the top. The prompt box is usually 1, so **position 2 is right under the prompt**.
 - `home_grid` sets `cols` (1 to 4) and `tiling`: `flow` (the page scrolls; the default) or `tile` (widgets fill the screen like a tiling window manager).
-- `home_reset` replaces everything with a preset: `prompt` (just the prompt box) or `dashboard` (prompt, needs, running, inbox, workstreams, projects).
+- `home_reset` replaces everything with a preset: `prompt` (just the prompt box) or `dashboard` (prompt, needs, running, work items, inbox, projects).
 
 ## Examples
 
@@ -56,10 +56,10 @@ To refer to a widget, use its id from `home_show` (like `w12`). If there is exac
  {"tool": "home_change", "args": {"id": "running", "w": 1, "position": 3, "reason": "running beside needs"}}]
 ```
 
-"Show my tasks as a board, full width."
+"Show my task board, full width."
 
 ```json
-[{"tool": "home_add", "args": {"kind": "tasks", "shape": "board", "w": 4, "reason": "tasks as a board"}}]
+[{"tool": "home_add", "args": {"kind": "board", "w": 4, "reason": "task board, full width"}}]
 ```
 
 "Make the needs list shorter, it takes too much room."

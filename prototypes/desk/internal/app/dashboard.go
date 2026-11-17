@@ -86,6 +86,7 @@ func (a *App) needs() []Need {
 	if proposed > 0 {
 		out = append(out, Need{ID: "filing", Source: "filing", Title: "Filing to confirm", Count: proposed, Time: newest})
 	}
+	out = append(out, a.workNeeds()...)
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Time.After(out[j].Time) })
 	return out
 }
@@ -117,7 +118,7 @@ func (a *App) deskMsg() map[string]any {
 	return map[string]any{
 		"t": "desk", "desk": a.Desk.Snapshot(), "projects": a.allDetails(),
 		"needs": a.needs(), "running": a.running(), "wikis": wikis, "addons": addons,
-		"homeKinds": shellCatalog(), "homeUndo": a.homeUndoInfo(),
+		"homeKinds": shellCatalog(), "homeUndo": a.homeUndoInfo(), "workItems": a.workItems(),
 	}
 }
 

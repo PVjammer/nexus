@@ -218,6 +218,21 @@ func toolPaneOpen(a *App, c *Ctx, m map[string]any) (string, error) {
 		if title == "" {
 			title = truncate(strings.TrimPrefix(strings.TrimPrefix(u, "https://"), "http://"), 30)
 		}
+	case "workitem":
+		w, err := a.checkItemRef(sArg(m, "item"))
+		if err != nil {
+			return "", err
+		}
+		if w.Project != c.Project.ID {
+			return "", deny("work item %s is in project %s, not yours", w.Ref, w.Project)
+		}
+		p.Props["ref"] = w.Ref
+		if t := sArg(m, "task"); t != "" {
+			p.Props["task"] = t
+		}
+		if title == "" {
+			title = w.Title
+		}
 	case "plugin":
 		id := sArg(m, "plugin_id")
 		pl, ok := a.Plugins.Get(id)

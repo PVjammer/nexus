@@ -60,7 +60,7 @@ func aprop(desc string, items map[string]any) map[string]any {
 
 const placementDesc = "Where to put it: 'target' (your own group, default; never steals the user's focus), 'right' or 'down' (new split beside the user's focused group), a group id, or '<groupId>:left|right|top|bottom'."
 
-var paneKinds = []string{"markdown", "html", "sheet", "review", "terminal", "browser", "plugin", "files", "log"}
+var paneKinds = []string{"markdown", "html", "sheet", "review", "terminal", "browser", "plugin", "files", "log", "workitem"}
 
 var (
 	H   = []string{KindHome}
@@ -165,11 +165,11 @@ func (a *App) tools() []Tool {
 			Description: "See your project's layout: groups (with ids), their tabs, which group the user is focused on, and which is your target.",
 			Parameters:  obj(nil, map[string]any{}), run: toolLayoutGet},
 		{Name: "pane_open", Label: "Open pane", Kinds: P,
-			Description: "Open a pane in the project. Kinds: markdown/html (you supply content; html is sandboxed with no scripts), sheet (CSV path), review (.md/.txt/.html path: the user can comment), terminal (the user's shell in the project folder; you can't read it), browser (url, to follow along), plugin (plugin_id), files (path), log. Opens in your group in the background with a badge.",
+			Description: "Open a pane in the project. Kinds: markdown/html (you supply content; html is sandboxed with no scripts), sheet (CSV path), review (.md/.txt/.html path: the user can comment), terminal (the user's shell in the project folder; you can't read it), browser (url, to follow along), plugin (plugin_id), files (path), log, workitem (item ref: its tasks and done-when, optionally with one task docked). Opens in your group in the background with a badge.",
 			Parameters: obj([]string{"kind"}, map[string]any{
 				"kind": eprop("pane kind", paneKinds...), "title": sprop("tab title"),
 				"path": sprop("file path like '<project>/README.md'"), "content": sprop("markdown or html body"), "url": sprop("browser url"),
-				"plugin_id": sprop("plugin id"), "placement": sprop(placementDesc),
+				"plugin_id": sprop("plugin id"), "item": sprop("workitem: the work item ref (from work_items)"), "task": sprop("workitem: a task id to show docked"), "placement": sprop(placementDesc),
 			}), run: toolPaneOpen},
 		{Name: "pane_update", Label: "Update pane", Kinds: P,
 			Description: "Replace (or, with append=true, extend) the title and/or content of a markdown or html pane. For a long page, write it in parts: pane_open with the first part, then pane_update append=true for each next part.",
@@ -263,7 +263,7 @@ func (a *App) tools() []Tool {
 }
 
 func (a *App) allTools() []Tool {
-	return append(append(append(a.tools(), a.wikiTools()...), a.codeTools()...), a.homeTools()...)
+	return append(append(append(append(a.tools(), a.wikiTools()...), a.codeTools()...), a.homeTools()...), a.workTools()...)
 }
 
 // toolsFor is the tool set of one agent: by its kind, plus add-on tools
@@ -328,7 +328,8 @@ func (a *App) CallTool(r *Run, name string, args map[string]any) (string, error)
 	}
 	switch name {
 	case "layout_get", "plugin_list", "vault_list", "broker_list", "projects_list", "capture_list", "task_list", "wiki_list", "plan_update",
-		"home_show", "home_add", "home_change", "home_remove", "home_grid", "home_reset", "home_undo": // home_* log through homeChanged
+		"home_show", "home_add", "home_change", "home_remove", "home_grid", "home_reset", "home_undo", // home_* log through homeChanged
+		"work_items", "work_tasks", "work_task_add", "work_task_update", "work_item_set", "needs_you": // work_* log through workChanged
 	default:
 		a.Log.Add(e)
 	}

@@ -115,6 +115,9 @@ func (a *App) homeContext(view string) string {
 	if waiting > 0 {
 		fmt.Fprintf(&b, "captures waiting to be filed: %d (capture_list, then capture_propose for each)\n", waiting)
 	}
+	if n := len(a.workNeeds()); n > 0 {
+		fmt.Fprintf(&b, "tasks waiting on the user: %d (work_tasks needs_me=true)\n", n)
+	}
 	b.WriteString(a.describeHome())
 	b.WriteString("(the user's prompt box is the chat widget; change the home screen only when asked, with home_* tools)\n")
 	b.WriteString("</nexus-context>")
@@ -193,6 +196,9 @@ func (a *App) projectContext(pid, selection string) string {
 	if len(items) > 0 {
 		b.WriteString("nexus items (open):\n" + strings.Join(items, "\n") + "\n")
 	}
+	if wi := a.describeItems(pid, false); !strings.HasPrefix(wi, "no work items") {
+		b.WriteString("work items in progress (tasks: work_tasks item=<ref>):\n" + wi)
+	}
 	if len(tasks) > 0 {
 		b.WriteString("dispatched tasks:\n" + strings.Join(tasks, "\n") + "\n")
 	}
@@ -249,6 +255,18 @@ func (a *App) paneExcerpt(p store.Pane) string {
 		return truncate(c, 3000)
 	case "markdown", "html":
 		return truncate(str(p.Props["content"]), 2000)
+	case "workitem":
+		ref := str(p.Props["ref"])
+		for _, w := range a.workItems() {
+			if w.Ref == ref {
+				s := fmt.Sprintf("work item %s %q (%s, %s, move: %s)\ndone when: %s\ntasks:\n", w.Ref, w.Title, w.Source, w.State, firstNonEmpty(w.MoveNote, w.Move), strings.Join(w.DoneWhen, "; "))
+				s += a.describeTasks(func(t *desk.WorkTask) bool { return t.Item == ref })
+				if f := str(p.Props["task"]); f != "" {
+					s += "the user has task " + f + " open\n"
+				}
+				return s
+			}
+		}
 	case "task":
 		if t, ok := a.Desk.Task(str(p.Props["task"])); ok {
 			return fmt.Sprintf("task %s [%s] %s\nbrief:\n%s\nsummary: %s\nreport: %s", t.ID, t.Status, t.Title, truncate(t.Brief, 1500), t.Summary, t.Report)

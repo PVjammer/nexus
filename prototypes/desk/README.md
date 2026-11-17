@@ -18,7 +18,10 @@ Open the printed URL (it ends in `#token=…`). It uses port 8741 and stores dat
 
 | | What you see | What to try |
 |---|---|---|
-| **Home** | A dashboard with Needs you, Running, Inbox (captures) and Projects, plus widgets. On the right is the **home agent** (a working name). | "What needs me in the homelab?" "Where did we land on GitLab?" |
+| **Home** | Starts as **one prompt box** (the home agent). Ask it anything; it can also arrange this screen ("put what needs me under this box", "two columns", "undo that"). **Customize manually** (bottom right) does the same by hand: columns, Flow or Tile, add/move/resize/remove widgets, Undo, presets. Every widget is data (what it shows, for what, in which shape, at which size); **⋯ → What is this?** shows it, and anything the agent added is marked. The **need you** count in the top bar is always there. | "Set up my home screen", then Customize manually |
+| **Chats** | Every conversation with an agent (home, each project, each task), saved and listed whether or not it's on a screen. The chat widget has two styles: **Minimal** (prompt + last exchange) and **Conversation**. | Open Chats, pick the home agent, keep talking |
+| **Apps** | What you and the agents share: **Tasks**, Wiki, Docs, Sheets, Terminal, Browser, Action log, and plugins. The launcher is how you open them by hand; agents use the same apps through tools and can open them for you. | Apps → Tasks |
+| **Tasks** | **Work items** come from their sources (open foreman workstreams, backlog lines, Nexus list items) and are never changed there. **Tasks** are next actions toward them, kept only in Nexus, on the board To do / In progress / Blocked / In review / Done, assigned to you, an agent or a named person. Tasks waiting on you join Needs you; parking a work item hides its tasks until you bring it back. Click a task for its panel (status, who, waits on, due, Take it / Hand to the agent); **Open in workspace ↗** opens the work item in its project with the task docked, next to the project agent. Widgets: Work items, Task board, Todos. | "Break demo-ws down", "I'm waiting on IT for access", then Apps → Tasks → Board |
 | **First run** | A blank canvas and the home agent. It scans `~/Workspace` for foreman ledgers and git repos, proposes a list, adds the projects with briefs in its own words, and offers a widget. | `make reset && make dev`, then click **Find my projects** |
 | **Capture** | **+ Capture**, Ctrl+Shift+Space, or the box on the dashboard. One line per thought. The home agent proposes a project, a kind and a clean title, and you **Accept**, change or dismiss each one. | Paste a messy dump of notes |
 | **Projects** | A rail showing the brief, Needs you, Tasks, Items, foreman **Workstreams** (click one to open its report), the **Backlog** (→ dispatches an item), Docs and a **Journal**. Panes sit in the middle and the **project agent** on the right. | Open a foreman report and comment on it with *ask agent* |
@@ -38,12 +41,17 @@ Open the printed URL (it ends in `#token=…`). It uses port 8741 and stores dat
 | **Project** (one per project) | its project (read), its panes, your selection | panes, notes and sheets under `desk/<project>/`, review threads and suggestions, items, **draft** tasks, propose commands | write to the repo, start tasks, read the terminal |
 | **Task** (one per dispatch, ephemeral) | its project (read) | write a report, finish | change anything; it stops when done |
 
-Each agent is its own `pi --mode rpc` process with its own token, which decides its tools. The core defines and polices all tools (`internal/app/tools.go`). Instructions are in `pi/home.md`, `pi/project.md` and `pi/task.md`.
+Each agent is its own process with its own token, which decides its tools. The core defines and polices all tools (`internal/app/tools.go`). Instructions are in `pi/home.md`, `pi/project.md` and `pi/task.md`, plus the **skills** for that agent kind.
+
+**Agent loops.** pi by default. **Claude Code** works too, headless (`claude -p`, no SDK, your Claude Code login): `CORE_FLAGS='-agent claude'`, or per kind (`-agent-task claude -claude-model-task opus`). Its own tools are off; it gets Nexus's tools from `nexus-core mcp` (an MCP server that forwards to the core with the agent's token), runs in an empty folder in the data dir, and loads none of your Claude Code settings, hooks, MCP servers or CLAUDE.md. Claude Code still adds your account email and environment details to its context (not removable without `--bare`, which refuses logins). One conversation per agent, resumed after a restart; Stop interrupts the turn.
+
+**Skills.** Each capability agents use to change Nexus ships with a skill (`skills/<name>/SKILL.md`, agentskills.io format): `home-layout` (home agent) and `tasks` (home and project agents). They're written for small local models: one tool per action, fixed choices, a worked example per common request, errors that say how to fix the call, ids or names accepted. Parts that must match the code (the widget catalog, the task statuses) are generated into the text when an agent starts, and `TestSkillExamples` runs every example against the real tools, so a skill can't drift. `make eval-home MODEL=…` checks a real model against 13 plain requests.
 
 ## Tests
 
 - **`make test`** runs Go tests: reading a foreman ledger (inbox minus acks, lenient JSONL), project scopes and read-only folders, secret-file refusal, the secure tool, focus and undo, capture → propose → file, the task lifecycle and report versioning, the wiki (writes, history, proposals, scopes, bootstrap), plans, add-on tool gating, and widget validation.
-- **`make e2e`** runs 36 checks against a live core and a scratch project with a canary `.env`, playing both the UI and each agent (no model needed, via `-test-hooks`). It ends with a leak check over Nexus's data directory.
+- **`make eval-home MODEL=spark/Qwen3.6-35B-A3B:low`** (or `MODEL=claude:sonnet`) runs a real model through 13 requests: arranging the home screen, breaking work down, recording who you're waiting on, parking, and one plain question that must change nothing.
+- **`make e2e`** runs 52 checks against a live core and a scratch project with a canary `.env`, playing both the UI and each agent (no model needed, via `-test-hooks`). It ends with a leak check over Nexus's data directory.
 - **Tried live** on 2026-11-12 with pi and the homelab model:
   - onboarding of the five real projects
   - "what needs me in the homelab"
@@ -56,7 +64,9 @@ Each agent is its own `pi --mode rpc` process with its own token, which decides 
 - **Ctrl+B is taken by Nexus,** including inside terminals, so it won't reach a tmux running there.
 
 - **Foreman is read-only here.** Clearing a need hides it in Nexus only. Dispatch uses Nexus's own task agents, not foreman workstreams.
-- **Transcripts live in memory**, so chats reset when the core restarts. Tasks, items, captures and layouts persist.
+- **Work item sources** are foreman workstreams, foreman backlog lines and Nexus list items. Jira, GitHub and doc-based sources are next; the work-item shape is ready for them.
+- **Tasks don't run agents by themselves.** An agent task is a record of who's on it; "Draft for a task agent" turns it into a dispatched task you start. Triggers (cron, callbacks, suggestions) are on the backlog.
+- **Layouts are for Home only.** Project screens keep their pane layout; project dashboards would use the same widget model.
 - **No sandbox.** Task agents are read-only through the tools. A real environment (worktree plus agentbox or OpenShell) is the parked exploration in `the-split.md`.
 - **Filing quality depends on the model.** In the live run, "openshell under podman" went to homelab, although agent-lockdown has an `openshell-compare` workstream. The home instructions now say to search first.
 - **No global hotkey yet.** Ctrl+Shift+Space works only inside the window.
