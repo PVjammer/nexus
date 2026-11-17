@@ -9,7 +9,7 @@ SEED ?= -project Homelab=$(WS)/homelab -project "AI Projects=$(AIP)" -project fo
         -project agent-lockdown=$(AIP)/projects/agent-lockdown -project Nexus=$(AIP)/projects/nexus
 CORE_FLAGS ?=
 
-.PHONY: help deps build web core shell dev seeded app test e2e reset
+.PHONY: help deps build web core shell dev seeded app test e2e eval-home reset
 
 help:
 	@echo "make deps     install web dependencies (npm)"
@@ -18,9 +18,11 @@ help:
 	@echo "make app      build + open the native window (needs GTK/WebKit headers)"
 	@echo "make test     Go unit tests"
 	@echo "make e2e      end-to-end checks against a fresh core and a scratch project (no model needed)"
+	@echo "make eval-home MODEL=spark/Qwen3.6-35B-A3B:low   can this model arrange the home screen? (real model)"
 	@echo "make reset    delete prototype data in $(DATA) (your project folders are never touched)"
 	@echo
 	@echo "Model: pi's default. Override: CORE_FLAGS='-model ollama/qwen3-64k'"
+	@echo "Claude Code instead of pi (your Claude Code login, no SDK): CORE_FLAGS='-agent claude' or per kind, e.g. '-agent-task claude -claude-model-task opus'"
 
 deps:
 	cd web && npm install
@@ -56,6 +58,11 @@ e2e: build
 	  bin/nexus-core -data $$D/data -agent none -test-hooks -addr 127.0.0.1:8798 -scan $$D -project Demo=$$D/proj > $$D/core.log 2>&1 & \
 	  PID=$$!; for i in $$(seq 30); do curl -sf 127.0.0.1:8798/healthz >/dev/null && break; sleep 0.2; done; \
 	  node scripts/e2e.mjs http://127.0.0.1:8798 $$(cat $$D/data/token) $$D; RC=$$?; kill $$PID; echo "(scratch data left in $$D)"; exit $$RC
+
+# Real-model eval of the home-layout skill + home_* tools. CASES='add-needs undo' runs a subset.
+MODEL ?= spark/Qwen3.6-35B-A3B:low
+eval-home: build
+	node scripts/eval-home.mjs $(MODEL) $(CASES)
 
 reset:
 	@test -n "$(DATA)" && test "$(DATA)" != "/" && test "$(DATA)" != "$(HOME)" || { echo "refusing: DATA=$(DATA)"; exit 1; }

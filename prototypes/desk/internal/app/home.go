@@ -420,7 +420,11 @@ func (a *App) describeHome() string {
 		if w.By == "default" {
 			by = "default"
 		}
-		fmt.Fprintf(&b, "%d. id=%s %s (%s)%s%s, %d wide, %s, %s\n", i+1, w.ID, w.Kind, w.Shape, extra, scope, w.W, h, by)
+		wide := "full width"
+		if w.W < l.Cols {
+			wide = fmt.Sprintf("%d of %d columns", w.W, l.Cols)
+		}
+		fmt.Fprintf(&b, "%d. id=%s %s (%s)%s%s, %s, %s, %s\n", i+1, w.ID, w.Kind, w.Shape, extra, scope, wide, h, by)
 	}
 	return b.String()
 }

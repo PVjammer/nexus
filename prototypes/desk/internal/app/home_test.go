@@ -39,7 +39,7 @@ func TestHomeStartsAsThePrompt(t *testing.T) {
 func TestHomeAgentEditsTheHomeScreen(t *testing.T) {
 	a, _ := newTestApp(t)
 	out := mustCall(t, a, "home", "home_add", map[string]any{"kind": "needs", "project": "alpha", "w": 2, "position": 2, "reason": "user asked"})
-	if !strings.Contains(out, "needs (list), project alpha, 2 wide") {
+	if !strings.Contains(out, "needs (list), project alpha, 2 of 3 columns") {
 		t.Fatalf("add result should show the layout: %s", out)
 	}
 	l := a.Desk.Layout("home")

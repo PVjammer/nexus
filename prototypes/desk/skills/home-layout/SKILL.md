@@ -28,7 +28,7 @@ To refer to a widget, use its id from `home_show` (like `w12`). If there is exac
 
 ## Sizes and the grid
 
-- `w` is columns wide, 1 to 4. A widget can't be wider than the grid, so 4 means full width.
+- `w` is columns wide, 1 to 4. A widget is never wider than the grid: anything as wide as the grid or wider is drawn full width, so changing the column count never needs width changes.
 - `h` is rows tall, 1 to 4. `0` means as tall as it needs (the default).
 - `position` is 1-based: 1 is the top. The prompt box is usually 1, so **position 2 is right under the prompt**.
 - `home_grid` sets `cols` (1 to 4) and `tiling`: `flow` (the page scrolls; the default) or `tile` (widgets fill the screen like a tiling window manager).
