@@ -3,6 +3,7 @@ package app
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestWorkItemsComeFromTheirSources(t *testing.T) {
@@ -149,4 +150,29 @@ func TestInProgressLimitIsConfigurable(t *testing.T) {
 		t.Fatalf("0 means never: %s", out)
 	}
 	wantErr(t, a, "work_limit", map[string]any{"limit": 99, "reason": "r"}, "0 to 20")
+}
+
+// Regression: setting blocked_by on an existing task resolved names under
+// the store's lock and froze the whole store.
+func TestUpdatingBlockersDoesNotDeadlock(t *testing.T) {
+	a, _ := newTestApp(t)
+	mustCall(t, a, "home", "work_task_add", map[string]any{"item": "ws:alpha/ws-one", "title": "Design it", "reason": "r"})
+	mustCall(t, a, "home", "work_task_add", map[string]any{"item": "ws:alpha/ws-one", "title": "Build it", "reason": "r"})
+	done := make(chan string, 1)
+	go func() {
+		out, _ := call(t, a, "home", "work_task_update", map[string]any{"id": "Build it", "blocked_by": []any{"Design it"}, "reason": "order"})
+		done <- out
+	}()
+	select {
+	case out := <-done:
+		if !strings.Contains(out, "[blocked]") && !strings.Contains(out, "Build it") {
+			t.Fatalf("unexpected: %s", out)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("work_task_update with blocked_by hung")
+	}
+	wantErr(t, a, "work_task_update", map[string]any{"id": "Build it", "blocked_by": []any{"Build it"}, "reason": "r"}, "itself")
+	if _, err := a.handleWork("workTaskUpdate", map[string]any{"id": "Design it", "blockedBy": []any{"Build it"}}); err != nil {
+		t.Fatal(err) // the task panel's "waits on" goes the same way
+	}
 }

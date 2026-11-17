@@ -297,6 +297,26 @@ func (a *App) findTask(id string) (desk.WorkTask, error) {
 	return desk.WorkTask{}, fixErr("no task %q. work_tasks lists the ids (like k12)", id)
 }
 
+// resolveBlockers turns blocked_by entries (ids or exact titles) into ids.
+// It reads the store, so it must run before UpdateWorkTask takes its lock.
+func (a *App) resolveBlockers(e *TaskEdit) error {
+	if e.BlockedBy == nil {
+		return nil
+	}
+	ids := []string{}
+	for _, b := range *e.BlockedBy {
+		o, err := a.findTask(b)
+		if err != nil {
+			return err
+		}
+		ids = append(ids, o.ID)
+	}
+	e.BlockedBy = &ids
+	return nil
+}
+
+// applyTaskEdit applies an edit whose blockers are already resolved to ids.
+// It runs under the store's lock, so it must not call back into the store.
 func (a *App) applyTaskEdit(t *desk.WorkTask, e TaskEdit) error {
 	if e.Title != nil {
 		if strings.TrimSpace(*e.Title) == "" {
@@ -329,18 +349,12 @@ func (a *App) applyTaskEdit(t *desk.WorkTask, e TaskEdit) error {
 		t.Note = *e.Note
 	}
 	if e.BlockedBy != nil {
-		var ids []string
-		for _, b := range *e.BlockedBy {
-			o, err := a.findTask(b)
-			if err != nil {
-				return err
-			}
-			if o.ID == t.ID {
+		for _, id := range *e.BlockedBy {
+			if id == t.ID {
 				return fixErr("a task can't wait on itself")
 			}
-			ids = append(ids, o.ID)
 		}
-		t.BlockedBy = ids
+		t.BlockedBy = append([]string(nil), *e.BlockedBy...)
 	}
 	return nil
 }
@@ -368,6 +382,9 @@ func (a *App) workTaskAdd(by, project string, e TaskEdit) (desk.WorkTask, error)
 	if e.Title == nil || strings.TrimSpace(*e.Title) == "" {
 		return t, fixErr("title is required: the next concrete action, e.g. \"Answer the platform lead's question\"")
 	}
+	if err := a.resolveBlockers(&e); err != nil {
+		return t, err
+	}
 	if err := a.applyTaskEdit(&t, e); err != nil {
 		return t, err
 	}
@@ -386,6 +403,9 @@ func (a *App) workTaskUpdate(by, project, id string, e TaskEdit) (desk.WorkTask,
 	}
 	if project != "" && cur.Project != project {
 		return cur, deny("task %s is in project %s, not yours (%s)", cur.ID, cur.Project, project)
+	}
+	if err := a.resolveBlockers(&e); err != nil {
+		return cur, err
 	}
 	nt, err := a.Desk.UpdateWorkTask(cur.ID, func(t *desk.WorkTask) error { return a.applyTaskEdit(t, e) })
 	if err == nil {
