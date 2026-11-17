@@ -118,7 +118,7 @@ func (a *App) deskMsg() map[string]any {
 	return map[string]any{
 		"t": "desk", "desk": a.Desk.Snapshot(), "projects": a.allDetails(),
 		"needs": a.needs(), "running": a.running(), "wikis": wikis, "addons": addons,
-		"homeKinds": shellCatalog(), "homeUndo": a.homeUndoInfo(), "workItems": a.workItems(),
+		"homeKinds": shellCatalog(), "homeUndo": a.homeUndoInfo(), "workItems": a.workItems(), "wipLimit": a.Desk.WipLimit(),
 	}
 }
 

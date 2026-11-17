@@ -125,3 +125,28 @@ func TestNeedsYouToolMatchesTheScreen(t *testing.T) {
 		t.Fatalf("a project agent sees its own project only: %s", out)
 	}
 }
+
+func TestInProgressLimitIsConfigurable(t *testing.T) {
+	a, _ := newTestApp(t)
+	if a.Desk.WipLimit() != 4 {
+		t.Fatal("default limit is 4")
+	}
+	mustCall(t, a, "home", "work_limit", map[string]any{"limit": 1, "reason": "r"})
+	var bl string
+	for _, w := range a.workItems() {
+		if w.Source == "foreman backlog" {
+			bl = w.Ref
+		}
+	}
+	out := mustCall(t, a, "home", "work_item_set", map[string]any{"item": bl, "state": "in-progress", "reason": "r"})
+	if !strings.Contains(out, "2 work items in progress; their limit is 1") || !strings.Contains(out, "ws:alpha/ws-one") {
+		t.Fatalf("over the limit, the agent should be told and given candidates: %s", out)
+	}
+	if _, err := a.handleWork("workLimit", map[string]any{"limit": float64(0)}); err != nil {
+		t.Fatal(err)
+	}
+	if out := mustCall(t, a, "home", "work_item_set", map[string]any{"item": bl, "state": "in-progress", "reason": "r"}); strings.Contains(out, "limit") {
+		t.Fatalf("0 means never: %s", out)
+	}
+	wantErr(t, a, "work_limit", map[string]any{"limit": 99, "reason": "r"}, "0 to 20")
+}

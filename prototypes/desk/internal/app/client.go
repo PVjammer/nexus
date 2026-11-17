@@ -243,7 +243,7 @@ func (a *App) handleClient(c *client, m map[string]any, raw []byte) {
 	// ---- widgets and the home screen ----
 	case "widgetRemove":
 		a.Desk.RemoveWidget(str(m["widget"]))
-	case "workTaskAdd", "workTaskUpdate", "workTaskRemove", "workItemSet":
+	case "workTaskAdd", "workTaskUpdate", "workTaskRemove", "workItemSet", "workLimit":
 		if v, err := a.handleWork(t, m); err != nil {
 			fail(err)
 		} else {

@@ -3,7 +3,7 @@
 // task), the Tasks app window, the renderers home widgets reuse, and the
 // work-item view that a project workspace opens as a pane.
 
-import { ago, desk, h, on, project, promptModal, request, toast } from "./core";
+import { ago, desk, h, modal, on, project, promptModal, request, toast } from "./core";
 import { ic } from "./icons";
 
 export type WorkTask = {
@@ -44,6 +44,34 @@ async function act(m: Record<string, any>): Promise<any> {
   try { return await request({ ...m, space: "" }); } catch (e: any) { toast(e.message, "error"); return null; }
 }
 const update = (id: string, m: Record<string, any>) => act({ t: "workTaskUpdate", id, ...m });
+
+// ---- starting work: the in-progress limit ----
+
+const wipLimit = () => ((desk as any)?.wipLimit ?? 4) as number;
+
+/** startItem brings a work item into progress. Over the limit, it suggests
+ *  parking one first: ones waiting on others or blocked come first. */
+export function startItem(w: WorkItem) {
+  const lim = wipLimit();
+  const ip = items().filter((x) => x.state === "in-progress" && x.ref !== w.ref);
+  const go = () => act({ t: "workItemSet", item: w.ref, state: "in-progress" });
+  if (lim <= 0 || ip.length < lim) { go(); return; }
+  const rank = (x: WorkItem) => ({ waiting: 0, blocked: 1, none: 2, ready: 3, agent: 4, you: 5 } as any)[x.move] ?? 6;
+  modal((close) => h("div", { class: "modal" },
+    h("h3", {}, `You have ${ip.length} work items in progress`),
+    h("p", {}, `Your limit is ${lim}. Park one before starting `, h("b", {}, w.title), "? Parked work keeps its tasks; they're just out of your lists until you bring it back."),
+    ...ip.slice().sort((a, b) => rank(a) - rank(b)).map((x) => h("div", { class: "crow" },
+      h("span", { class: "crow-t" }, x.title), projTag(x.project), moveChip(x),
+      h("button", { onclick: () => { act({ t: "workItemSet", item: x.ref, state: "parked", parkNote: x.move === "waiting" ? (x.moveNote || "") : "" }); go(); close(); } }, "Park this and start"))),
+    h("div", { class: "row" }, h("button", { class: "link small", onclick: () => { close(); openTasksApp("items"); } }, "Change the limit"),
+      h("span", { class: "grow" }), h("button", { onclick: close }, "Cancel"), h("button", { class: "primary", onclick: () => { go(); close(); } }, "Start anyway"))));
+}
+
+function limitSetting(): HTMLElement {
+  const inp = h("input", { type: "number", min: "0", max: "20", value: String(wipLimit()), style: { width: "56px" },
+    onchange: (e: Event) => act({ t: "workLimit", limit: Number((e.target as HTMLInputElement).value) }) });
+  return h("div", { class: "muted small limit" }, "Suggest parking one when more than ", inp, " are in progress (0 = never).");
+}
 
 // ---- small pieces ----
 
@@ -200,9 +228,9 @@ export function notInProgress(pid?: string): HTMLElement[] {
     h("span", { class: "muted small crow-n" }, projTag(w.project), w.parkNote ? `parked ${w.parkNote}` : w.source), btn);
   return [
     parked.length ? h("div", { class: "hint" }, "Parked") : null,
-    ...parked.map((w) => row(w, h("button", { onclick: () => act({ t: "workItemSet", item: w.ref, state: "in-progress" }) }, "Bring back"))),
+    ...parked.map((w) => row(w, h("button", { onclick: () => startItem(w) }, "Bring back"))),
     later.length ? h("div", { class: "hint" }, "Not started (from your backlogs and lists)") : null,
-    ...later.map((w) => row(w, h("button", { onclick: () => act({ t: "workItemSet", item: w.ref, state: "in-progress" }) }, "Start"))),
+    ...later.map((w) => row(w, h("button", { onclick: () => startItem(w) }, "Start"))),
     !parked.length && !later.length ? h("div", { class: "empty-note" }, "Nothing waiting to start.") : null,
   ].filter(Boolean) as HTMLElement[];
 }
@@ -239,7 +267,7 @@ function drawApp() {
   let body: (HTMLElement | null)[] = [];
   if (tab === "needs") body = needsList(pid);
   if (tab === "board") body = [h("div", { class: "row" }, h("button", { onclick: () => addTask(undefined, pid) }, ic("plus"), " Todo"), h("span", { class: "muted small" }, "Cards move when work happens; open one to change it.")), board(pid)];
-  if (tab === "items") body = [h("h4", {}, "In progress"), ...workItemCards(pid), h("h4", {}, "Not in progress"), ...notInProgress(pid)];
+  if (tab === "items") body = [h("h4", {}, `In progress (${items().filter((w) => w.state === "in-progress").length})`), limitSetting(), ...workItemCards(pid), h("h4", {}, "Not in progress"), ...notInProgress(pid)];
   if (tab === "todos") body = todos();
   root.replaceChildren(h("div", { class: "work-app" },
     h("div", { class: "wa-head" }, h("b", {}, ic("board"), " Tasks"),
@@ -276,7 +304,7 @@ export function workItemView(ref: string, focus?: string) {
         h("span", { class: "grow-r" }), moveChip(w),
         w.report ? h("button", { onclick: () => hooks.openWorkspace("open-report:" + w.report) }, ic("doc"), " Report") : "",
         w.state === "in-progress" ? h("button", { onclick: async () => { const note = await promptModal(`Park ${w.title}`, "Until… (optional)"); if (note !== null) act({ t: "workItemSet", item: w.ref, state: "parked", parkNote: note || "" }); } }, "Park")
-          : h("button", { class: "primary", onclick: () => act({ t: "workItemSet", item: w.ref, state: "in-progress" }) }, w.state === "parked" ? "Bring back" : "Start")),
+          : h("button", { class: "primary", onclick: () => startItem(w) }, w.state === "parked" ? "Bring back" : "Start")),
       w.state === "parked" ? h("div", { class: "banner" }, `Parked${w.parkNote ? ` ${w.parkNote}` : ""}. Its tasks are out of your lists until you bring it back.`) : "",
       ft ? taskPanel(ft, { docked: true, onClose: () => { focused = ""; draw(); } }) : "",
       h("div", { class: "wi-cols" },

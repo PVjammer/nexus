@@ -421,6 +421,38 @@ func (a *App) workItemSet(by, project, ref, state, note string, doneWhen *[]stri
 	return t, nil
 }
 
+// inProgress counts work items in progress.
+func (a *App) inProgress() []WorkItem {
+	var out []WorkItem
+	for _, w := range a.workItems() {
+		if w.State == "in-progress" {
+			out = append(out, w)
+		}
+	}
+	return out
+}
+
+// overLimitNote is what the agent is told after starting a work item that
+// takes the user over their in-progress limit: suggest parking one, don't do it.
+func (a *App) overLimitNote() string {
+	lim := a.Desk.WipLimit()
+	ip := a.inProgress()
+	if lim <= 0 || len(ip) <= lim {
+		return ""
+	}
+	var cands []string
+	for _, w := range ip {
+		if w.Move == "waiting" || w.Move == "blocked" || w.Move == "none" {
+			cands = append(cands, fmt.Sprintf("%s (%s)", w.Ref, firstNonEmpty(w.MoveNote, w.Move)))
+		}
+	}
+	s := fmt.Sprintf("\nNote: the user now has %d work items in progress; their limit is %d. Suggest parking one (ask; don't park it yourself).", len(ip), lim)
+	if len(cands) > 0 {
+		s += " Good candidates, nothing to do on their side: " + strings.Join(cands, ", ")
+	}
+	return s
+}
+
 func (a *App) workChanged(by, what, target, why string) {
 	actor := you
 	if by != "you" {
@@ -523,6 +555,21 @@ func (a *App) workTools() []Tool {
 				}
 				return b.String(), nil
 			}},
+		{Name: "work_limit", Label: "In-progress limit", Kinds: H,
+			Description: "Set how many work items the user can have in progress before starting another one suggests parking one (0 = never suggest). Only when the user asks.",
+			Parameters:  obj([]string{"limit", "reason"}, map[string]any{"limit": iprop("0-20; 0 = never"), "reason": reason}),
+			run: func(a *App, _ *Ctx, m map[string]any) (string, error) {
+				if err := needReason(m); err != nil {
+					return "", err
+				}
+				n := iArg(m, "limit", -1)
+				if n < 0 || n > 20 {
+					return "", fixErr("limit must be 0 to 20 (0 = never suggest parking)")
+				}
+				a.Desk.SetWipLimit(n)
+				a.workChanged("home agent", "set the in-progress limit", fmt.Sprint(n), sArg(m, "reason"))
+				return fmt.Sprintf("limit set to %d (%d in progress now)", n, len(a.inProgress())), nil
+			}},
 		{Name: "work_items", Label: "Work items", Kinds: HP,
 			Description: "List work items (foreman workstreams, backlog lines, Nexus list items) with their ref, state (in-progress, parked, not-started), whose move it is and task counts. In-progress only unless all=true.",
 			Parameters:  obj(nil, map[string]any{"project": sprop("project id (default: yours; home: every project)"), "all": bprop("include parked and not-started work items")}),
@@ -623,7 +670,11 @@ func toolWorkItemSet(a *App, c *Ctx, m map[string]any) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("%s: %s%s, done when: %s", t.Ref, firstNonEmpty(t.State, "unchanged"), map[bool]string{true: " (" + t.ParkNote + ")", false: ""}[t.ParkNote != ""], strings.Join(t.DoneWhen, "; ")), nil
+	note := ""
+	if sArg(m, "state") == "in-progress" {
+		note = a.overLimitNote()
+	}
+	return fmt.Sprintf("%s: %s%s, done when: %s%s", t.Ref, firstNonEmpty(t.State, "unchanged"), map[bool]string{true: " (" + t.ParkNote + ")", false: ""}[t.ParkNote != ""], strings.Join(t.DoneWhen, "; "), note), nil
 }
 
 // ---- from the shell ----
@@ -651,6 +702,14 @@ func (a *App) handleWork(t string, m map[string]any) (any, error) {
 		}
 		a.Desk.RemoveWorkTask(tk.ID)
 		a.workChanged("you", "removed task", tk.Title, "")
+		return nil, nil
+	case "workLimit":
+		n := iArg(m, "limit", -1)
+		if n < 0 || n > 20 {
+			return nil, fixErr("limit must be 0 to 20 (0 = never)")
+		}
+		a.Desk.SetWipLimit(n)
+		a.workChanged("you", "set the in-progress limit", fmt.Sprint(n), "")
 		return nil, nil
 	case "workItemSet":
 		return a.workItemSet("you", "", str(m["item"]), str(m["state"]), str(m["parkNote"]), optStrs(m, "doneWhen"), "")

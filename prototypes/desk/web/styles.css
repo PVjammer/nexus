@@ -586,3 +586,5 @@ button.link.danger { color: var(--danger); }
 .wi-cols .row { display: flex; gap: 6px; align-items: center; }
 ul.dw { margin: 6px 0; padding-left: 18px; }
 .banner { background: var(--panel-2); border-radius: 8px; padding: 8px 12px; }
+
+.limit { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }

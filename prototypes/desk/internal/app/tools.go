@@ -329,7 +329,7 @@ func (a *App) CallTool(r *Run, name string, args map[string]any) (string, error)
 	switch name {
 	case "layout_get", "plugin_list", "vault_list", "broker_list", "projects_list", "capture_list", "task_list", "wiki_list", "plan_update",
 		"home_show", "home_add", "home_change", "home_remove", "home_grid", "home_reset", "home_undo", // home_* log through homeChanged
-		"work_items", "work_tasks", "work_task_add", "work_task_update", "work_item_set", "needs_you": // work_* log through workChanged
+		"work_items", "work_tasks", "work_task_add", "work_task_update", "work_item_set", "needs_you", "work_limit": // work_* log through workChanged
 	default:
 		a.Log.Add(e)
 	}

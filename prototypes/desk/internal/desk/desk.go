@@ -153,9 +153,12 @@ type State struct {
 	Widgets   []*Widget           `json:"widgets,omitempty"` // legacy; migrated into Layouts["home"]
 	Layouts   map[string]*Layout  `json:"layouts"`           // "home" (project dashboards later)
 	WorkTasks []*WorkTask         `json:"workTasks"`
-	Tracked   map[string]*Tracked `json:"tracked"`   // by work item ref
-	Dismissed map[string]bool     `json:"dismissed"` // foreman inbox ids you cleared in Nexus
-	Seq       int                 `json:"seq"`
+	Tracked   map[string]*Tracked `json:"tracked"` // by work item ref
+	// WipLimit is how many work items can be in progress before starting
+	// another one suggests parking one. nil = the default (4); 0 = never.
+	WipLimit  *int            `json:"wipLimit,omitempty"`
+	Dismissed map[string]bool `json:"dismissed"` // foreman inbox ids you cleared in Nexus
+	Seq       int             `json:"seq"`
 }
 
 type Store struct {
@@ -617,6 +620,25 @@ func (s *Store) settleLocked() {
 			t.Status, t.Updated = "todo", time.Now()
 		}
 	}
+}
+
+// DefaultWipLimit is the in-progress limit until the user sets one.
+const DefaultWipLimit = 4
+
+func (s *Store) WipLimit() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.st.WipLimit == nil {
+		return DefaultWipLimit
+	}
+	return *s.st.WipLimit
+}
+
+func (s *Store) SetWipLimit(n int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.st.WipLimit = &n
+	s.commitLocked()
 }
 
 // ---- tracked work items ----
