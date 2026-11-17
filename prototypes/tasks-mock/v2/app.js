@@ -1,5 +1,5 @@
 // Nexus desktop mock v2. One store; every box on screen is a widget = data + scope + shape.
-// Spaces (home, a project, a work item's workstream) are layouts of widgets. The Tasks app is
+// Spaces (home, a project, a work item's workspace) are layouts of widgets. The Tasks app is
 // a set of default views made of the same widgets. Throwaway: vanilla JS, mock data only.
 (function () {
   'use strict';
@@ -178,7 +178,7 @@
       ${line('Agent', ts.filter(agentWorking), (t) => `${esc(t.title)}${t.progress ? ` <span class="muted">(${esc(t.progress)})</span>` : ''}`)}
       ${line('Waiting', ts.filter(waitingOthers), (t) => `${esc(waitWho(t))}${t.waitDays != null ? ` <span class="muted">${t.waitDays}d</span>` : ''}`)}
       ${line('After', ts.filter((t) => t.status === 'blocked'), (t) => esc(t.title))}
-      ${sp.startsWith('wi:') ? '' : `<div class="chips"><button class="pill" data-act="open-wi" data-id="${id}">Open the workstream</button><button class="pill" data-act="pin-left" data-id="${id}" data-a="${sp}">Pin this as a widget</button></div>`}`;
+      ${sp.startsWith('wi:') ? '' : `<div class="chips"><button class="pill" data-act="open-wi" data-id="${id}">Open the workspace</button><button class="pill" data-act="pin-left" data-id="${id}" data-a="${sp}">Pin this as a widget</button></div>`}`;
   }
   const ASKS = [
     { key: 'plan', where: (sp) => sp === 'home', label: () => 'Plan my day', run(sp) {
@@ -192,7 +192,7 @@
     { key: 'sec', where: (sp) => sp === 'home', label: () => 'Keep SEC-431\'s back-and-forth on my home', run(sp) {
       if (layoutFor(sp).some((w) => w.q === 'thread' && w.scope === 'wi:sec431')) return say(sp, 'agent', 'It\'s already on your home.');
       snapshot(sp); layoutFor(sp).push(mkW({ q: 'thread', scope: 'wi:sec431', size: 2, by: 'agent', why: 'You asked to keep SEC-431\'s back-and-forth on your home.' }));
-      say(sp, 'agent', 'Added the SEC-431 thread at the bottom of your home. It\'s the same widget as in the workstream, scoped to SEC-431.');
+      say(sp, 'agent', 'Added the SEC-431 thread at the bottom of your home. It\'s the same widget as in the workspace, scoped to SEC-431.');
       toast('The agent added the SEC-431 thread', true);
     } },
     { key: 'trim', where: (sp) => sp === 'home', label: () => 'Strip my home to the essentials', run(sp) {
@@ -317,7 +317,7 @@
         prev = t.id; made.push(t.id);
       });
       w.doneWhen = b.doneWhen.map((text, i) => ({ text, by: [made[Math.min(i + 1, made.length - 1)] || made[0]] }));
-      feed('you', `Started ${w.key}: ${w.title}`, `Workstream created with the scope, done-when and ${made.length} tasks.`, w.id);
+      feed('you', `Started ${w.key}: ${w.title}`, `Workspace created with the scope, done-when and ${made.length} tasks.`, w.id);
       ui.modal = null; toast(`${w.key} started. Its first task is underway.`);
     },
     'toggle-watcher': (id) => { const w = W(id); w.watcher.on = !w.watcher.on; w.watcher.log.unshift(`${clockShort()}  ${w.watcher.on ? 'resumed' : 'paused'} by you`); toast(w.watcher.on ? 'Watcher resumed' : 'Watcher paused. Nothing checks SEC-431 until you resume it.'); },
@@ -395,7 +395,7 @@
     any: { label: 'The agent finishes another task', ok: () => !!anyAgentTask(), hint: 'No other agent task is running',
       run() {
         const t = anyAgentTask(); t.reviewer = 'you'; t.est = 10; t.why = 'Agent finished just now';
-        t.packet = { summary: `Finished: ${t.title}. Changes are on the workstream branch with notes.`, checks: ['Tests pass', 'Rebased on main'], files: [['(see the workstream)', '']], diff: ['+ …'], followups: [] };
+        t.packet = { summary: `Finished: ${t.title}. Changes are on the workspace branch with notes.`, checks: ['Tests pass', 'Rebased on main'], files: [['(see the workspace)', '']], diff: ['+ …'], followups: [] };
         setStatus(t, 'review', 'agent', 'Finished; waiting for your review.'); toast(`Finished: ${t.title}. It's in Needs you.`);
       } },
     hotel: { label: 'The agent finishes the hotel search', ok: () => T('hotel') && T('hotel').status === 'doing', hint: 'Ask the agent to help with the hotel todo first',
@@ -618,7 +618,7 @@
       <div class="space-h"><span class="key big" data-p="${esc(w.project)}">${esc(w.key)}</span><div class="grow"><h2>${esc(w.title)}</h2><p class="muted small">${esc(w.source)}: ${esc(w.sourceRef)} · Nexus reads it, ${esc(w.source)} owns it · the tasks below live only in your Nexus</p></div><span class="move ${m.kind}">${esc(m.label)}${m.n ? ' · ' + m.n : ''}</span></div>
       <div class="ws-bar">${sess}${w.closed ? '' : w.inProgress ? `<button class="btn ghost small" data-act="park" data-id="${w.id}">Park</button>` : `<button class="btn small" data-act="unpark" data-id="${w.id}">Bring back</button>`}<span class="grow"></span>${editBtns()}</div>
       ${!w.inProgress && !w.closed ? `<div class="banner park">Parked: ${esc(w.parkNote || '')}. Its tasks are out of your lists until then.</div>` : ''}
-      ${w.closed ? `<div class="banner done">Closed in ${esc(w.source)}. The workstream is kept for reference.</div>` : ''}`;
+      ${w.closed ? `<div class="banner done">Closed in ${esc(w.source)}. The workspace is kept for reference.</div>` : ''}`;
   }
   function editBtns() {
     return ui.edit
@@ -754,7 +754,7 @@
       </header>
       <div class="tp-body">${body}</div>
       <div class="tp-actions">${actions}</div>
-      <div class="tp-foot small muted">${w ? `<button class="link" data-act="open-wi" data-id="${w.id}">Open the ${esc(w.key)} workstream</button>${w.inProgress && !w.closed ? ` · <button class="link" data-act="park" data-id="${w.id}">Park ${esc(w.key)}</button>` : ''}` : 'A todo: no work item, no workstream.'}
+      <div class="tp-foot small muted">${w ? `<button class="link" data-act="open-wi" data-id="${w.id}">Open the ${esc(w.key)} workspace</button>${w.inProgress && !w.closed ? ` · <button class="link" data-act="park" data-id="${w.id}">Park ${esc(w.key)}</button>` : ''}` : 'A todo: no work item, no workspace.'}
         ${nxt ? `<div class="nextin">Next in ${esc(label(ui.from.wd))}: <button class="link" data-act="open-task" data-id="${nxt.id}" data-from="${esc(ui.from.wd.id)}">${esc(nxt.title)} →</button></div>` : ''}</div>
     </div>`;
   }
@@ -785,7 +785,7 @@
       || inProg.map((w) => ({ w, t: wiTasks(w.id).find((t) => waitingOthers(t) && (t.waitDays || 0) >= 5) })).filter((x) => x.t)[0];
     const nudge = inProg.length >= 4 && stuck;
     return `<div class="modal-bg"><div class="modal" role="dialog" aria-label="Start a work item">
-      <header class="tp-h"><button class="icon close" aria-label="Close" data-act="close-modal">×</button><span class="key" data-p="${esc(b.project)}">${esc(b.key)}</span><h2>Start: ${esc(b.title)}</h2><p class="muted small">From ${esc(b.source)}. Nexus creates a workstream and seeds it with what's below.</p></header>
+      <header class="tp-h"><button class="icon close" aria-label="Close" data-act="close-modal">×</button><span class="key" data-p="${esc(b.project)}">${esc(b.key)}</span><h2>Start: ${esc(b.title)}</h2><p class="muted small">From ${esc(b.source)}. Nexus creates a workspace and seeds it with what's below.</p></header>
       ${nudge ? `<div class="nudge"><strong>You have ${inProg.length} work items in progress.</strong> ${esc(stuck.w.key)} has been waiting on ${esc(waitWho(stuck.t))} for ${stuck.t.waitDays || 0} days. Park it until that's done?<div class="nudge-actions"><button class="btn primary" data-act="seed-start" data-id="${b.id}" data-a="${stuck.w.id}">Park ${esc(stuck.w.key)} and start</button><button class="btn" data-act="seed-start" data-id="${b.id}">Start anyway</button></div></div>` : ''}
       <div class="seed">
         <h3>Scope</h3><p>${esc(b.scope)}</p>
@@ -806,7 +806,7 @@
       <header class="tp-h"><button class="icon close" aria-label="Close" data-act="close-modal">×</button><h2>${esc(def.label)}</h2></header>
       <dl class="spec">
         <dt>Shows</dt><dd>${esc(def.rule)}</dd>
-        <dt>Scope</dt><dd>${esc(scopeName(sc))}${wd.scope === 'inherit' ? ' <span class="muted small">(follows the space it sits in: on Home everything, in a project that project, in a workstream that work item)</span>' : ''}</dd>
+        <dt>Scope</dt><dd>${esc(scopeName(sc))}${wd.scope === 'inherit' ? ' <span class="muted small">(follows the space it sits in: on Home everything, in a project that project, in a workspace that work item)</span>' : ''}</dd>
         <dt>Shape</dt><dd>${esc(wd.shape ? SHAPE_NAME[wd.shape] : 'provided by the app')}</dd>
         <dt>Added by</dt><dd>${by}</dd>
       </dl>
@@ -838,7 +838,7 @@
     return `<div class="pop pop-l" role="menu">
       <button class="mi${ui.space === 'home' && !ui.page ? ' on' : ''}" data-act="go" data-id="home">Home</button>
       <div class="mi-h">Projects</div>${S.projects.map((p) => `<button class="mi${ui.space === 'p:' + p.id && !ui.page ? ' on' : ''}" data-act="go" data-id="p:${p.id}">${esc(p.name)} <span class="muted small">${needsList().filter(inT('p:' + p.id)).length || ''}</span></button>`).join('')}
-      <div class="mi-h">Workstreams</div>${ws.map((w) => `<button class="mi${ui.space === 'wi:' + w.id && !ui.page ? ' on' : ''}" data-act="go" data-id="wi:${w.id}"><span class="key" data-p="${esc(w.project)}">${esc(w.key)}</span> ${esc(w.title)} <span class="muted small">${st(w)}</span></button>`).join('')}
+      <div class="mi-h">Workspaces</div>${ws.map((w) => `<button class="mi${ui.space === 'wi:' + w.id && !ui.page ? ' on' : ''}" data-act="go" data-id="wi:${w.id}"><span class="key" data-p="${esc(w.project)}">${esc(w.key)}</span> ${esc(w.title)} <span class="muted small">${st(w)}</span></button>`).join('')}
     </div>`;
   }
   function appsPop() {
