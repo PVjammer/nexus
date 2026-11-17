@@ -1,5 +1,7 @@
 # tasks-mock (throwaway)
 
+> **v2 is in [`v2/`](v2/README.md)**: the same Monday rebuilt as a desktop of widgets (data + scope + shape), with spaces, workstreams and a Tasks app. This page describes v1, the three home-screen variants.
+
 A clickable mock of how Nexus could handle work items and tasks. **Mock data only**: nothing is wired to the Nexus core, desk or foreman. Workstream task-mgmt, 2026-11-16. Design: [`docs/design/work-items-and-tasks.md`](../../docs/design/work-items-and-tasks.md).
 
 ## Run it
