@@ -141,6 +141,48 @@ ok("parking hides its tasks from needs-you", ws1()?.state === "parked" && !desk.
 r = await call("p:demo", "pane_open", { kind: "workitem", item: "ws:demo/demo-ws" });
 ok("the project agent can open the work item in its workspace", !r.isError, r.text);
 
+console.log("onboarding (scan → propose → tick → shape)");
+r = await call("p:demo", "project_scan", {});
+ok("the scan finds signs of work with where they are", !r.isError && /backlog\.md:\d+ · pick a date/.test(r.text) && r.text.includes("docs/plan.md"), r.text?.slice(0, 300));
+ok("…without reading secret files", !r.text.includes("CANARY"));
+r = await call("p:demo", "work_propose", { reason: "e2e setup", proposals: [{ title: "Write the launch plan", why: "docs/plan.md is a stub", evidence: ["docs/plan.md:1"] }, { title: "Fix the slow startup" }] });
+await sleep(300);
+const props = () => (desk.desk.proposals || []).filter((q) => q.status === "open");
+ok("proposals wait for the user's checklist (and show in needs-you)", !r.isError && props().length === 2 && desk.needs.some((n) => n.source === "proposals" && n.count === 2), r.text);
+send({ t: "proposalsResolve", accept: [props()[0].id], dismiss: [props()[1].id], start: true, space: "" });
+await sleep(300);
+const planItem = () => wi().find((w) => w.title === "Write the launch plan");
+ok("ticked ones become work items (started), the rest are dismissed", planItem()?.state === "in-progress" && props().length === 0, JSON.stringify(planItem()));
+ok("a new work item needs shaping", planItem()?.unshaped === true);
+r = await call("p:demo", "work_propose", { reason: "again", proposals: [{ title: "fix the slow startup" }] });
+ok("dismissed suggestions aren't offered again", /Skipped/.test(r.text) && props().length === 0, r.text);
+r = await call("p:demo", "ask_user", { question: "When?", options: ["Now"] });
+ok("questions need answers to click", r.isError && /2-5 options/.test(r.text));
+r = await call("p:demo", "work_item_set", { item: "Write the launch plan", brief: "One page, for the team.", done_when: ["Plan written", "Team read it"], reason: "e2e answers" });
+r = await call("p:demo", "work_propose", { item: "Write the launch plan", reason: "next", proposals: [{ title: "Draft the outline", assignee: "agent" }] });
+await sleep(300);
+send({ t: "proposalsResolve", accept: props().map((q) => q.id), dismiss: [], space: "" });
+await sleep(300);
+ok("shaped: brief, done-when and a task, by title", planItem()?.brief === "One page, for the team." && planItem()?.open === 1 && !planItem()?.unshaped, JSON.stringify(planItem()));
+ok("…and nothing was written into the project", !fs.readFileSync(path.join(scratch, "proj", ".foreman", "backlog.md"), "utf8").includes("outline"));
+
+console.log("the customizer (a draft you try before keeping)");
+const nHome = home().length;
+r = await call("customizer", "home_add", { kind: "running", reason: "e2e: show running" });
+await sleep(300);
+const cz = () => [...seen].reverse().find((m) => m.t === "customizer")?.customizer || desk.customizer;
+ok("its changes go to a draft; the live screen is untouched", !r.isError && home().length === nHome && /draft/.test(r.text), r.text);
+ok("the shell sees what's being built", cz()?.added?.length === 1 && cz()?.draft?.widgets?.length === nHome + 1, JSON.stringify(cz()));
+r = await call("customizer", "work_task_add", { title: "x", reason: "e2e" });
+ok("it only has the layout tools", r.isError);
+send({ t: "customizerKeep", space: "" });
+await sleep(300);
+ok("Keep puts it live", home().length === nHome + 1 && cz()?.state === "idle");
+r = await call("customizer", "home_grid", { cols: 1, reason: "e2e" });
+send({ t: "customizerRollback", space: "" });
+await sleep(300);
+ok("Roll back drops the draft", desk.desk.layouts.home.cols !== 1 && cz()?.state === "idle");
+
 console.log("project wiki");
 r = await call("p:demo", "wiki_write", { page: "index", content: "# Demo\n\nWhat this is: a scratch project.\n\n## Pages\n- [[plan]]: the plan\n", summary: "front page", sources: ["demo/README.md"] });
 ok("project agent writes the wiki index", !r.isError, r.text);

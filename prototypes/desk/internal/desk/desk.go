@@ -97,11 +97,37 @@ type WorkTask struct {
 // Tracked is what Nexus keeps about a work item it reads from a source:
 // whether it's in progress, parked (and on what), and when it's done.
 type Tracked struct {
-	Ref      string    `json:"ref"`
-	State    string    `json:"state,omitempty"` // in-progress | parked | not-started
-	ParkNote string    `json:"parkNote,omitempty"`
-	DoneWhen []string  `json:"doneWhen,omitempty"`
-	Updated  time.Time `json:"updated"`
+	Ref      string   `json:"ref"`
+	State    string   `json:"state,omitempty"` // in-progress | parked | not-started
+	ParkNote string   `json:"parkNote,omitempty"`
+	DoneWhen []string `json:"doneWhen,omitempty"`
+	// Brief is what the work is, in a few lines: what the user said when the
+	// agent asked (scope, constraints, who's involved). Shaping fills it.
+	Brief   string    `json:"brief,omitempty"`
+	Updated time.Time `json:"updated"`
+}
+
+// WorkProposal is something an agent suggests and the user accepts or
+// dismisses: a new work item for a project (Item == "") or a task toward a
+// work item. Proposals come in batches the user reviews as one checklist.
+type WorkProposal struct {
+	ID       string    `json:"id"`
+	Batch    string    `json:"batch"`
+	Project  string    `json:"project"`
+	Item     string    `json:"item,omitempty"` // "" = proposes a work item; else a task toward this ref
+	Title    string    `json:"title"`
+	Why      string    `json:"why,omitempty"`
+	Evidence []string  `json:"evidence,omitempty"` // where it came from: "src/x.go:12", "branch feat/y"
+	Assignee string    `json:"assignee,omitempty"` // tasks: you | agent | a name
+	Status   string    `json:"status"`             // open | accepted | dismissed
+	Agent    string    `json:"agent"`              // who proposed it ("p:<project>", "home")
+	Created  time.Time `json:"created"`
+}
+
+// Onboarding is where a project's setup conversation is.
+type Onboarding struct {
+	Started time.Time `json:"started"`
+	Scanned time.Time `json:"scanned,omitempty"` // last project_scan
 }
 
 // LayoutWidget is one widget on a screen: what it shows (Kind, from the
@@ -156,9 +182,11 @@ type State struct {
 	Tracked   map[string]*Tracked `json:"tracked"` // by work item ref
 	// WipLimit is how many work items can be in progress before starting
 	// another one suggests parking one. nil = the default (4); 0 = never.
-	WipLimit  *int            `json:"wipLimit,omitempty"`
-	Dismissed map[string]bool `json:"dismissed"` // foreman inbox ids you cleared in Nexus
-	Seq       int             `json:"seq"`
+	WipLimit  *int                   `json:"wipLimit,omitempty"`
+	Proposals []*WorkProposal        `json:"proposals,omitempty"`
+	Onboard   map[string]*Onboarding `json:"onboard,omitempty"` // by project id
+	Dismissed map[string]bool        `json:"dismissed"`         // foreman inbox ids you cleared in Nexus
+	Seq       int                    `json:"seq"`
 }
 
 type Store struct {
@@ -180,6 +208,9 @@ func Open(path string) (*Store, error) {
 		s.st.Dismissed = map[string]bool{}
 	}
 	s.undo = map[string][]undoEntry{}
+	if s.st.Onboard == nil {
+		s.st.Onboard = map[string]*Onboarding{}
+	}
 	if s.st.Tracked == nil {
 		s.st.Tracked = map[string]*Tracked{}
 	}
@@ -448,6 +479,43 @@ func (s *Store) EditLayout(name, label string, f func(l *Layout, newID func() st
 	return work.clone(), nil
 }
 
+// HasLayout says whether a layout exists (drafts exist only while staged).
+func (s *Store) HasLayout(name string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.st.Layouts[name] != nil
+}
+
+// StartDraft makes draft a copy of from, unless the draft already exists.
+func (s *Store) StartDraft(draft, from string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.st.Layouts[draft] != nil {
+		return
+	}
+	src := s.st.Layouts[from]
+	if src == nil {
+		d := DefaultHome(time.Now())
+		src = &d
+	}
+	c := src.clone()
+	s.st.Layouts[draft] = &c
+	s.undo[draft] = nil
+	s.commitLocked()
+}
+
+// DropLayout deletes a layout (a discarded draft) and its undo history.
+func (s *Store) DropLayout(name string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.st.Layouts[name] == nil {
+		return
+	}
+	delete(s.st.Layouts, name)
+	delete(s.undo, name)
+	s.commitLocked()
+}
+
 // UndoLayout puts back the layout before the last change. It returns what
 // was undone.
 func (s *Store) UndoLayout(name string) (string, bool) {
@@ -670,4 +738,74 @@ func (s *Store) Dismissed(id string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.st.Dismissed[id]
+}
+
+// ---- proposals ----
+
+// AddProposals stores a batch and returns it with ids.
+func (s *Store) AddProposals(ps []WorkProposal) []WorkProposal {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	batch := s.id("b")
+	out := make([]WorkProposal, 0, len(ps))
+	for _, p := range ps {
+		p.ID, p.Batch, p.Status, p.Created = s.id("q"), batch, "open", time.Now()
+		c := p
+		s.st.Proposals = append(s.st.Proposals, &c)
+		out = append(out, p)
+	}
+	s.commitLocked()
+	return out
+}
+
+func (s *Store) Proposal(id string) (WorkProposal, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, p := range s.st.Proposals {
+		if p.ID == id {
+			return *p, true
+		}
+	}
+	return WorkProposal{}, false
+}
+
+// SetProposal marks a proposal accepted or dismissed.
+func (s *Store) SetProposal(id, status string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, p := range s.st.Proposals {
+		if p.ID == id {
+			if p.Status != "open" {
+				return fmt.Errorf("proposal %s is already %s", id, p.Status)
+			}
+			p.Status = status
+			s.commitLocked()
+			return nil
+		}
+	}
+	return fmt.Errorf("no proposal %q", id)
+}
+
+// ---- onboarding ----
+
+func (s *Store) Onboarding(project string) (Onboarding, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	o := s.st.Onboard[project]
+	if o == nil {
+		return Onboarding{}, false
+	}
+	return *o, true
+}
+
+func (s *Store) TouchOnboarding(project string, f func(*Onboarding)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	o := s.st.Onboard[project]
+	if o == nil {
+		o = &Onboarding{}
+		s.st.Onboard[project] = o
+	}
+	f(o)
+	s.commitLocked()
 }

@@ -24,6 +24,8 @@ func (a *App) Chat(agentID, text, selection, view string) {
 		ctx = a.homeContext(view)
 	case KindProject:
 		ctx = a.projectContext(r.Project, selection)
+	case KindCustomizer:
+		ctx = a.customizerContext(view, selection)
 	case KindTask:
 		if t, ok := a.Desk.Task(r.Task); ok {
 			ctx = a.taskContext(t)
@@ -198,6 +200,30 @@ func (a *App) projectContext(pid, selection string) string {
 	}
 	if wi := a.describeItems(pid, false); !strings.HasPrefix(wi, "no work items") {
 		b.WriteString("work items in progress (tasks: work_tasks item=<ref>):\n" + wi)
+	}
+	all, unshaped, pending := 0, []string{}, 0
+	for _, w := range a.workItems() {
+		if w.Project != pid {
+			continue
+		}
+		all++
+		if w.Unshaped {
+			unshaped = append(unshaped, w.Title)
+		}
+	}
+	for _, q := range a.openProposals() {
+		if q.Project == pid {
+			pending++
+		}
+	}
+	if all == 0 && pending == 0 {
+		b.WriteString("setup: this project has no work items yet (onboarding skill: project_scan, then work_propose)\n")
+	}
+	if pending > 0 {
+		fmt.Fprintf(&b, "proposals waiting for the user's checklist: %d\n", pending)
+	}
+	if len(unshaped) > 0 {
+		fmt.Fprintf(&b, "in progress but not shaped yet (no done-when or no tasks): %s\n", strings.Join(unshaped, "; "))
 	}
 	if len(tasks) > 0 {
 		b.WriteString("dispatched tasks:\n" + strings.Join(tasks, "\n") + "\n")

@@ -55,7 +55,7 @@ test:
 e2e: build
 	@D=$$(mktemp -d); mkdir -p $$D/proj; cp -r testdata/project/. $$D/proj/; printf 'API_KEY=CANARY-ENV-5d1e\n' > $$D/proj/.env; \
 	  (cd $$D/proj && git init -q && git add -A && git -c user.name=e2e -c user.email=e2e@local commit -qm init); \
-	  bin/nexus-core -data $$D/data -agent none -test-hooks -addr 127.0.0.1:8798 -scan $$D -project Demo=$$D/proj > $$D/core.log 2>&1 & \
+	  bin/nexus-core -data $$D/data -agent none -test-hooks -foreman -addr 127.0.0.1:8798 -scan $$D -project Demo=$$D/proj > $$D/core.log 2>&1 & \
 	  PID=$$!; for i in $$(seq 30); do curl -sf 127.0.0.1:8798/healthz >/dev/null && break; sleep 0.2; done; \
 	  node scripts/e2e.mjs http://127.0.0.1:8798 $$(cat $$D/data/token) $$D; RC=$$?; kill $$PID; echo "(scratch data left in $$D)"; exit $$RC
 

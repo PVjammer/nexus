@@ -21,6 +21,8 @@ const (
 	KindHome    = "home"    // global: organizes, files, retrieves; not how you work in a project
 	KindProject = "project" // pairs with you inside one project
 	KindTask    = "task"    // ephemeral: works one brief, returns a report
+	// KindCustomizer is the customizer (customizer.go): changes how Nexus
+	// looks, on a draft you try before keeping.
 )
 
 // RunSpec is what an agent factory needs to start one agent loop.
@@ -98,6 +100,8 @@ func (a *App) run(id string) (*Run, error) {
 	switch {
 	case id == "home":
 		r.Kind = KindHome
+	case id == customizerID:
+		r.Kind = KindCustomizer
 	case strings.HasPrefix(id, "p:"):
 		r.Kind, r.Project = KindProject, id[2:]
 		if _, ok := a.Projects.Get(r.Project); !ok {
@@ -157,6 +161,8 @@ func (r *Run) label() string {
 		return "home agent"
 	case KindProject:
 		return "project agent (" + r.Project + ")"
+	case KindCustomizer:
+		return CustomizerName
 	default:
 		return "task agent (" + r.Task + ")"
 	}
@@ -422,12 +428,18 @@ func (r *Run) pump() {
 			if r.Kind == KindTask {
 				r.a.taskTurnEnded(r)
 			}
+			if r.Kind == KindCustomizer {
+				r.a.customizerSettle()
+			}
 		case agent.EventError:
 			r.closeStream()
 			r.add(ChatMsg{Role: "system", Text: ev.Text, Error: true})
 			r.setBusy(false)
 			if r.Kind == KindTask {
 				r.a.taskFailed(r, ev.Text)
+			}
+			if r.Kind == KindCustomizer {
+				r.a.broadcastCustomizer() // the draft stays; Keep or Roll back
 			}
 		}
 	}

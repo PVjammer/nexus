@@ -39,7 +39,7 @@ type piFactory struct {
 }
 
 func (f piFactory) modelFor(kind string) string {
-	if m := f.byKind[kind]; m != "" {
+	if m := f.byKind[baseKind(kind)]; m != "" {
 		return m
 	}
 	return f.model
@@ -109,7 +109,7 @@ type claudeFactory struct {
 }
 
 func (f claudeFactory) modelFor(kind string) string {
-	if m := f.byKind[kind]; m != "" {
+	if m := f.byKind[baseKind(kind)]; m != "" {
 		return m
 	}
 	return f.model
@@ -178,6 +178,15 @@ func newUUID() string {
 	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:])
 }
 
+// baseKind: the customizer runs with the home agent's loop and model (its
+// own prompt file and tools).
+func baseKind(kind string) string {
+	if kind == app.KindCustomizer {
+		return app.KindHome
+	}
+	return kind
+}
+
 // mixFactory picks the agent loop per agent kind (home, project, task).
 type mixFactory struct {
 	byKind map[string]app.AgentFactory
@@ -185,7 +194,7 @@ type mixFactory struct {
 }
 
 func (m mixFactory) Start(ctx context.Context, s app.RunSpec) (agent.Backend, error) {
-	f := m.byKind[s.Kind]
+	f := m.byKind[baseKind(s.Kind)]
 	if f == nil {
 		return nil, fmt.Errorf("no agent loop for %s agents", s.Kind)
 	}
@@ -235,6 +244,7 @@ func main() {
 	piBuiltins := flag.String("pi-builtins", "", "pi built-in tools to allow (default none: agents only use app tools)")
 	vaultPath := flag.String("vault", "testdata/vault.json", "test vault file (fake values only!)")
 	testHooks := flag.Bool("test-hooks", false, "e2e only: expose /test/agent-token")
+	foreman := flag.Bool("foreman", false, "read foreman ledgers by default in projects that have one (off: projects switch the add-on on themselves)")
 	flag.Var(&scan, "scan", "folder onboarding scans for projects (repeatable; default ~/Workspace)")
 	flag.Var(&addProjects, "project", "add a project at startup: path or name=path (repeatable)")
 	flag.Parse()
@@ -247,7 +257,7 @@ func main() {
 	v, err := vault.Open(*vaultPath)
 	must(err)
 
-	cfg := app.Config{DataDir: *dataDir, WebDir: *webDir, SkillsDir: *skillsDir, Token: token, ScanRoots: scan, TestHooks: *testHooks}
+	cfg := app.Config{DataDir: *dataDir, WebDir: *webDir, SkillsDir: *skillsDir, Token: token, ScanRoots: scan, TestHooks: *testHooks, Foreman: *foreman}
 	if *agentKind != "none" || *agentHome != "" || *agentProject != "" || *agentTask != "" {
 		ext, _ := filepath.Abs("pi/nexus-tools.ts")
 		piDir, _ := filepath.Abs("pi")

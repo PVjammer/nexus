@@ -32,7 +32,15 @@ let editing = false;
 export const isEditing = () => editing;
 const cells = new Map<string, { el: HTMLElement; head: HTMLElement; body: HTMLElement; key: string; live?: Persistent }>();
 
-const layout = (): Layout => desk?.desk.layouts?.home || { cols: 3, tiling: "flow", widgets: [] };
+// The customizer (customizer.ts) works on a draft. While it builds, the live
+// screen shows what's under construction; when it's done, the draft is shown
+// in place (a trial) with Keep and Roll back.
+type Cz = { name: string; state: "idle" | "building" | "ready"; draft?: Layout; added?: string[]; changed?: string[]; removed?: string[]; grid?: boolean };
+export const customizer = (): Cz => ((desk as any)?.customizer || { name: "Eitri", state: "idle" }) as Cz;
+const trial = () => customizer().state === "ready" && !!customizer().draft;
+const liveLayout = (): Layout => desk?.desk.layouts?.home || { cols: 3, tiling: "flow", widgets: [] };
+const layout = (): Layout => trial() ? customizer().draft! : liveLayout();
+let revealed = new Set<string>(); // ids whose reveal animation already ran
 const widgets = (): LayoutWidget[] => layout().widgets || [];
 const catalog = (): WidgetKind[] => desk?.homeKinds || [];
 const kindInfo = (k: string) => catalog().find((x) => x.kind === k);
@@ -53,7 +61,14 @@ export function drawHome(root: HTMLElement) {
 
   let wrap = root.querySelector<HTMLElement>(":scope > .home-wrap");
   if (!wrap) { wrap = h("div", { class: "home-wrap" }); root.replaceChildren(wrap); }
-  wrap.className = `home-wrap${solo ? " solo" : ""}${editing ? " editing" : ""}${tile ? " tile" : ""}`;
+  const cz = customizer();
+  const building = cz.state === "building";
+  wrap.className = `home-wrap${solo ? " solo" : ""}${editing ? " editing" : ""}${tile ? " tile" : ""}${trial() ? " trial" : ""}${building && cz.grid ? " rebuilding" : ""}`;
+  if (cz.state === "idle") revealed = new Set();
+
+  let tbar = wrap.querySelector<HTMLElement>(":scope > .trial-bar");
+  const nt = trial() ? trialBar(cz) : building ? buildBar(cz) : null;
+  if (nt) { tbar ? tbar.replaceWith(nt) : wrap.prepend(nt); } else tbar?.remove();
 
   let bar = wrap.querySelector<HTMLElement>(":scope > .edit-bar");
   if (editing) { const nb = editBar(); bar ? bar.replaceWith(nb) : wrap.prepend(nb); } else bar?.remove();
@@ -72,7 +87,19 @@ export function drawHome(root: HTMLElement) {
   const want = new Set(ws.map((w) => w.id));
   for (const [id, c] of cells) if (!want.has(id)) { c.live?.destroy?.(); c.el.remove(); cells.delete(id); }
   const order: HTMLElement[] = [];
-  ws.forEach((w, i) => order.push(drawCell(w, i, ws.length, cols, tile, solo)));
+  const marks = new Set([...(cz.added || []), ...(cz.changed || [])]);
+  ws.forEach((w, i) => {
+    const el = drawCell(w, i, ws.length, cols, tile, solo);
+    el.classList.toggle("under-construction", building && (marks.has(w.id) || (cz.removed || []).includes(w.id)));
+    if (trial() && marks.has(w.id) && !revealed.has(w.id)) { revealed.add(w.id); el.classList.add("reveal"); setTimeout(() => el.classList.remove("reveal"), 1400); }
+    el.classList.toggle("built", trial() && marks.has(w.id));
+    order.push(el);
+  });
+  // New widgets don't exist on the live screen yet: a door where they're being built.
+  if (building) for (const id of cz.added || []) {
+    const dw = (cz.draft?.widgets || []).find((x) => x.id === id);
+    order.push(doorTile(id, dw ? kindInfo(dw.kind)?.label || dw.kind : "a widget", Math.min(Math.max(1, dw?.w || 1), cols)));
+  }
   const add = editing ? (grid.querySelector<HTMLElement>(".add-tile") || h("button", { class: "add-tile", onclick: addWidgetModal }, ic("plus"), " Add a widget")) : null;
   if (add) order.push(add); else grid.querySelector(".add-tile")?.remove();
   const same = order.length === grid.children.length && order.every((el, i) => grid!.children[i] === el);
@@ -85,8 +112,50 @@ export function drawHome(root: HTMLElement) {
   } else empty?.remove();
 
   let corner = wrap.querySelector<HTMLElement>(":scope > .corner-btn");
-  if (!editing) { if (!corner) wrap.append(h("button", { class: "corner-btn", title: "Change this screen yourself", onclick: () => { editing = true; drawHome(root); } }, ic("grid"), " Customize manually")); }
+  if (!editing && !trial()) { if (!corner) wrap.append(h("button", { class: "corner-btn", title: "Change this screen yourself", onclick: () => { editing = true; drawHome(root); } }, ic("grid"), " Customize manually")); }
   else corner?.remove();
+}
+
+// ---- the customizer's states on this screen ----
+
+const doors = new Map<string, HTMLElement>();
+function doorTile(id: string, what: string, span: number): HTMLElement {
+  let d = doors.get(id);
+  if (!d) {
+    d = h("section", { class: "hw door-tile", "data-door": id, title: `${customizer().name} is building ${what}` },
+      h("div", { class: "tape" }),
+      h("div", { class: "door-scene" },
+        h("div", { class: "door-frame" }, h("div", { class: "door" }), h("div", { class: "door-light" })),
+        h("div", { class: "lane" })),
+      h("div", { class: "door-label" }, ic("hammer"), ` Building ${what}…`));
+    doors.set(id, d);
+  }
+  d.style.gridColumn = `span ${span}`;
+  return d;
+}
+
+function summary(cz: Cz): string {
+  const parts: string[] = [];
+  const n = (k: "added" | "changed" | "removed", verb: string) => { const c = (cz[k] || []).length; if (c) parts.push(`${verb} ${c} widget${c === 1 ? "" : "s"}`); };
+  n("added", "added"); n("changed", "changed"); n("removed", "removed");
+  if (cz.grid) parts.push("a new grid");
+  return parts.join(", ") || "a change";
+}
+
+function buildBar(cz: Cz): HTMLElement {
+  return h("div", { class: "trial-bar building" }, h("span", { class: "busy-dot" }), ic("hammer"), h("b", {}, ` ${cz.name} is working`),
+    h("span", { class: "muted small" }, ` on ${summary(cz)}. Keep working; you'll get to try it before it stays.`),
+    h("span", { class: "grow-r" }),
+    h("button", { class: "link small", onclick: () => send({ t: "customizerRollback", space: "" }) }, "Cancel"));
+}
+
+function trialBar(cz: Cz): HTMLElement {
+  for (const [id, el] of doors) { el.remove(); doors.delete(id); }
+  return h("div", { class: "trial-bar" }, ic("hammer"), h("b", {}, ` Trying ${cz.name}'s change:`),
+    h("span", { class: "muted small" }, `${summary(cz)}. It's live here so you can use it; nothing is kept until you say.`),
+    h("span", { class: "grow-r" }),
+    h("button", { onclick: () => send({ t: "customizerRollback", space: "" }) }, "Roll back"),
+    h("button", { class: "primary", onclick: () => send({ t: "customizerKeep", space: "" }) }, ic("check"), " Keep"));
 }
 
 function drawCell(w: LayoutWidget, i: number, n: number, cols: number, tile: boolean, solo: boolean): HTMLElement {

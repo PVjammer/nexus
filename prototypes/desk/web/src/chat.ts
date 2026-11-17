@@ -3,6 +3,7 @@
 
 import { h, on, send } from "./core";
 import { md } from "./md";
+import { proposalChecklist } from "./work";
 
 export type Msg = { id: number; role: string; text: string; tool?: string; args?: string; result?: string; error?: boolean; done?: boolean; callId?: string };
 
@@ -52,9 +53,47 @@ const toolLabels: Record<string, string> = {
   term_propose: "proposed a command", review_suggest: "suggested an edit", sheet_edit: "edited a sheet", capture_propose: "proposed a filing",
   project_add: "added a project", widget_write: "built a widget", task_draft: "drafted a task", report_write: "wrote the report",
   task_finish: "finished", file_read: "read", search: "searched", project_get: "looked at a project", project_discover: "scanned for projects",
+  project_scan: "looked through the project", work_propose: "suggested work", ask_user: "asked", work_item_add: "added a work item",
+  home_add: "added a widget", home_change: "changed a widget", home_remove: "removed a widget", home_grid: "changed the grid", home_show: "looked at the screen",
 };
 
-function renderMsg(m: Msg): HTMLElement {
+function argsOf(m: Msg): any { try { return JSON.parse(m.args || "{}"); } catch { return {}; } }
+/** answered: the user has said something since this message. */
+const answered = (agent: string, m: Msg) => transcriptOf(agent).some((x) => x.id > m.id && (x.role === "you" || x.role === "app"));
+
+/** questionCard: the agent's ask_user, with answers to click. Several can
+ *  be picked when multi is set. Typing in the chat box answers too. */
+export function questionCard(agent: string, m: Msg, context?: () => { view?: string; selection?: string }): HTMLElement {
+  const a = argsOf(m);
+  const done = answered(agent, m) || !m.done || m.error;
+  const picked = new Set<string>();
+  const say = (text: string) => { const c = context?.() || {}; send({ t: "chat", agent, text, selection: c.selection || "", view: c.view || "" }); el.classList.add("done"); };
+  const opts = (a.options || []) as string[];
+  const el: HTMLElement = h("div", { class: `qcard${done ? " done" : ""}` },
+    h("div", { class: "q" }, a.question || ""),
+    h("div", { class: "chips" }, ...opts.map((o) => h("button", { type: "button", class: "chip", disabled: done,
+      onclick: (e: Event) => {
+        if (!a.multi) { say(o); return; }
+        const b = e.currentTarget as HTMLElement;
+        picked.has(o) ? picked.delete(o) : picked.add(o);
+        b.classList.toggle("on", picked.has(o));
+      } }, o)),
+      a.multi && !done ? h("button", { type: "button", class: "primary small", onclick: () => { if (picked.size) say([...picked].join(", ")); } }, "Send") : ""),
+    done ? "" : h("div", { class: "muted small" }, a.multi ? "Pick any, then Send. Or type your own answer." : "Click one, or type your own answer."));
+  return el;
+}
+
+function proposeCard(m: Msg): HTMLElement | null {
+  const b = /\(batch (b\d+)\)/.exec(m.result || "");
+  return b ? proposalChecklist(b[1], { compact: true }) : null;
+}
+
+function renderMsg(m: Msg, agent = "", context?: () => { view?: string; selection?: string }): HTMLElement {
+  if (m.role === "tool" && m.tool === "ask_user" && !m.error && agent) return questionCard(agent, m, context);
+  if (m.role === "tool" && m.tool === "work_propose" && m.done && !m.error) {
+    const c = proposeCard(m);
+    if (c) return h("div", { class: "msg tool-card" }, c);
+  }
   if (m.role === "tool") {
     const secure = m.tool === "vault_reveal" || m.tool === "secret_request";
     const el = h("div", { class: `msg tool${m.error ? " err" : ""}${secure ? " secure" : ""}${m.done ? "" : " pending"}`, onclick: () => el.classList.toggle("open") },
@@ -89,7 +128,7 @@ export type MiniOpts = {
   chips?: () => { label: string; text?: string; run?: () => void }[];
   intro?: () => HTMLElement | null;
   onHistory?: () => void;
-  context?: () => { view?: string };
+  context?: () => { view?: string; selection?: string };
 };
 export class MiniChat {
   el: HTMLElement;
@@ -119,7 +158,8 @@ export class MiniChat {
   private submit() {
     const text = this.input.value.trim();
     if (!text) return;
-    send({ t: "chat", agent: this.agent, text, selection: "", view: this.opts.context?.().view || "" });
+    const c = this.opts.context?.() || {};
+    send({ t: "chat", agent: this.agent, text, selection: c.selection || "", view: c.view || "" });
     this.input.value = ""; this.input.rows = 1;
   }
   private schedule(_delta: boolean) {
@@ -140,6 +180,8 @@ export class MiniChat {
       if (m.role === "you") kids.push(h("div", { class: "msg you" }, m.text));
       else if (m.role === "app") continue;
       else if (m.role === "agent" && m.text.trim()) kids.push(h("div", { class: "msg agent", html: md(m.text) }));
+      else if (m.role === "tool" && m.tool === "ask_user" && !m.error) kids.push(questionCard(this.agent, m, this.opts.context));
+      else if (m.role === "tool" && m.tool === "work_propose" && m.done && !m.error && proposeCard(m)) kids.push(proposeCard(m)!);
       else if (m.role === "tool") tools.push((m.error ? "⚠ " : "") + (toolLabels[m.tool || ""] || m.tool || "tool"));
       else if (m.role === "system" && m.error) kids.push(h("div", { class: "msg system error" }, m.text));
     }
@@ -180,7 +222,8 @@ export class ChatPanel {
       if (agent !== this.agent) return;
       if (kind === "reset") this.redraw();
       else if (kind === "add" && m) this.append(m);
-      else if (kind === "update" && m) { const el = this.els.get(m.id); if (el) { const n = renderMsg(m); el.replaceWith(n); this.els.set(m.id, n); } }
+      else if (kind === "update" && m) { const el = this.els.get(m.id); if (el) { const n = renderMsg(m, this.agent, this.opts.context); el.replaceWith(n); this.els.set(m.id, n); } }
+      if (kind === "add" && m && (m.role === "you" || m.role === "app")) this.log.querySelectorAll(".qcard:not(.done)").forEach((q) => q.classList.add("done"));
       else if (kind === "delta") this.flush();
       else if (kind === "busy") this.drawStatus();
     });
@@ -237,7 +280,7 @@ export class ChatPanel {
   private append(m: Msg, stick = true) {
     if (this.els.size === 0) this.log.querySelector(".chat-empty")?.remove();
     const near = this.log.scrollHeight - this.log.scrollTop - this.log.clientHeight < 80;
-    const el = renderMsg(m);
+    const el = renderMsg(m, this.agent, this.opts.context);
     this.els.set(m.id, el);
     this.log.append(el);
     if (!stick || near) this.log.scrollTop = this.log.scrollHeight;

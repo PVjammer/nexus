@@ -11,6 +11,9 @@ import (
 
 var jsonBlock = regexp.MustCompile("(?s)```json\n(.*?)```")
 
+// exampleAgent: which agent a skill's examples run as (default home).
+var exampleAgent = map[string]string{"onboarding": "p:alpha"}
+
 // TestSkillExamples runs every example tool call in every skill against the
 // real tools, so a skill can't teach a call the code no longer accepts.
 // Each example block starts from the dashboard preset.
@@ -38,8 +41,16 @@ func TestSkillExamples(t *testing.T) {
 			if err := a.homeReset("you", "dashboard", ""); err != nil {
 				t.Fatal(err)
 			}
+			// Examples name a work item by title; it exists in the fixture.
+			if _, err := a.workItemAdd("you", "alpha", "Add CSV export", "", true); err != nil {
+				t.Fatal(err)
+			}
+			agent := exampleAgent[name]
+			if agent == "" {
+				agent = "home"
+			}
 			for _, c := range calls {
-				if _, err := call(t, a, "home", c.Tool, c.Args); err != nil {
+				if _, err := call(t, a, agent, c.Tool, c.Args); err != nil {
 					t.Fatalf("%s example %d: %s %v failed: %v", name, i+1, c.Tool, c.Args, err)
 				}
 			}

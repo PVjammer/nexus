@@ -567,7 +567,9 @@ func toolSecretRequest(a *App, c *Ctx, m map[string]any) (string, error) {
 	return fmt.Sprintf("handle %s created; a secure entry box is open for the user. You'll never see the value. Use the handle as auth_handle once they confirm.", h.ID), nil
 }
 
-func toolBrokerList(a *App, _ *Ctx, _ map[string]any) (string, error) { return jsonOut(a.Broker.List()), nil }
+func toolBrokerList(a *App, _ *Ctx, _ map[string]any) (string, error) {
+	return jsonOut(a.Broker.List()), nil
+}
 
 func toolBrokerCall(a *App, _ *Ctx, m map[string]any) (string, error) {
 	token := ""

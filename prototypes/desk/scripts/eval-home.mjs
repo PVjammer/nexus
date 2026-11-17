@@ -1,8 +1,10 @@
-// Eval: can a given model arrange the home screen and track work from plain
-// requests, with the home-layout and tasks skills and their tools? Each case starts a fresh core
-// (pi + the model) with its own data dir, sets a starting layout, sends the
-// request(s) to the home agent and checks the layout afterwards. One case
-// checks the opposite: a plain question must not change the screen.
+// Eval: can a given model arrange the home screen, track work, set up a
+// project and shape a work item from plain requests, with the skills and
+// tools Nexus ships? Each case starts a fresh core (pi + the model) with its
+// own data dir, sets a starting layout (and, for some, a work item), sends
+// the request(s) to one agent (home, the Demo project agent, or the
+// customizer) and checks the result. One case checks the opposite: a plain
+// question must not change the screen.
 //
 // Usage: node scripts/eval-home.mjs <model> [case-name ...]
 //   pi:          node scripts/eval-home.mjs spark/Qwen3.6-35B-A3B:low
@@ -20,6 +22,8 @@ const TURN_TIMEOUT = Number(process.env.TURN_TIMEOUT || 300) * 1000;
 const kinds = (l) => (l.widgets || []).map((w) => w.kind);
 const wt = (d) => d.desk.workTasks || [];
 const find = (l, k) => (l.widgets || []).find((w) => w.kind === k);
+const csv = (d) => (d.workItems || []).find((w) => w.title === "Add CSV export");
+const openProps = (d) => (d.desk.proposals || []).filter((q) => q.status === "open");
 const cases = [
   { name: "add-needs", start: "prompt", say: ["Put what needs me on my home screen, right under this box."],
     check: (l) => kinds(l)[0] === "chat" && kinds(l)[1] === "needs" },
@@ -39,16 +43,30 @@ const cases = [
     check: (l) => kinds(l).join() === "chat" },
   { name: "undo", start: "dashboard", say: ["Remove the projects widget from my home screen.", "Actually, undo that."],
     check: (l) => !!find(l, "projects") },
-  { name: "question-only", start: "dashboard", say: ["What needs me right now?"],
-    check: (l, before, reply) => JSON.stringify(l) === JSON.stringify(before) && /date/i.test(reply), why: "a question must not change the screen, and the answer must include the foreman question waiting on the user (Which date?)" },
-  // tasks skill (work_* tools)
+  { name: "question-only", start: "dashboard", seed: true, say: ["What needs me right now?"],
+    check: (l, before, reply) => JSON.stringify(l) === JSON.stringify(before) && /format/i.test(reply), why: "a question must not change the screen, and the answer must include the task waiting on the user (Pick the export format)" },
+  // tasks skill (work_* tools), on a work item on the project's Nexus list
   // Asking "want me to add these?" first is fine (cowork); after a yes, the steps must be on the board.
-  { name: "break-down", start: "prompt", say: ["Break the demo-ws workstream down into the next few concrete steps.", "Yes, put them on the board."],
-    check: (l, before, reply, d) => { const n = wt(d).filter((t) => t.item === "ws:demo/demo-ws").length; return n >= 1 && n <= 8 && JSON.stringify(l) === JSON.stringify(before); }, why: "the steps must land on the board (the scratch workstream only 'needs a date', so one task is a fair breakdown)" },
-  { name: "waiting-on", start: "prompt", say: ["On demo-ws I'm waiting on IT to grant API access."],
-    check: (l, b, r, d) => wt(d).some((t) => t.item === "ws:demo/demo-ws" && /\bIT\b/i.test(t.assignee) && t.status !== "done") },
-  { name: "park", start: "prompt", say: ["Park demo-ws until the release date is decided."],
-    check: (l, b, r, d) => (d.workItems || []).some((w) => w.ref === "ws:demo/demo-ws" && w.state === "parked") },
+  { name: "break-down", start: "prompt", seed: true, say: ["Break CSV export down into the next few concrete steps.", "Yes, put them on the board."],
+    check: (l, before, reply, d) => { const n = wt(d).filter((t) => t.item === csv(d)?.ref && t.title !== "Pick the export format").length; return n >= 2 && n <= 8 && JSON.stringify(l) === JSON.stringify(before); }, why: "the steps must land on the board" },
+  { name: "waiting-on", start: "prompt", seed: true, say: ["On CSV export I'm waiting on IT to grant database access."],
+    check: (l, b, r, d) => wt(d).some((t) => t.item === csv(d)?.ref && /\bIT\b/i.test(t.assignee) && t.status !== "done") },
+  { name: "park", start: "prompt", seed: true, say: ["Park CSV export until finance decides the columns."],
+    check: (l, b, r, d) => csv(d)?.state === "parked" },
+  // onboarding skill (project agent): scan, propose, ask; shaping
+  { name: "setup", agent: "p:demo", start: "prompt", say: ["Set up this project: look through it for work, and help me decide what to work on."],
+    check: (l, b, r, d, tools) => tools.includes("project_scan") && openProps(d).filter((q) => !q.item).length >= 2 && !(d.workItems || []).some((w) => w.source === "project list"),
+    why: "it must scan, then propose (not add) work items for the user to tick" },
+  { name: "shape", agent: "p:demo", start: "prompt", seed: true, say: ['Shape "Add CSV export": ask me what you need to know, then propose the next tasks.', "Orders only, finance needs it by month end. Good enough, break it down."],
+    check: (l, b, r, d, tools) => tools.includes("ask_user") && ((csv(d)?.doneWhen || []).length > 0 || !!csv(d)?.brief) && openProps(d).filter((q) => q.item === csv(d)?.ref).length >= 2 && !wt(d).some((t) => t.item === csv(d)?.ref && t.title !== "Pick the export format"),
+    why: "it must ask (with answers to click), save what it learned, and propose tasks rather than add them" },
+  // the customizer: small changes apply at once, builds wait for Keep
+  { name: "eitri-small", agent: "customizer", start: "dashboard", say: ["Make the needs list compact."],
+    check: (l, b, r, d) => find(l, "needs")?.shape === "compact" && d.customizer?.state === "idle", why: "a small change goes live when the turn ends" },
+  { name: "eitri-build", agent: "customizer", start: "prompt", say: ["Add my task board under the prompt."],
+    check: (l, b, r, d) => JSON.stringify(l) === JSON.stringify(b) && d.customizer?.state === "ready" && (d.customizer?.draft?.widgets || []).some((w) => w.kind === "board"), why: "a new widget waits as a draft for Keep" },
+  { name: "eitri-this", agent: "customizer", start: "dashboard", point: "inbox", say: ["Remove this."],
+    check: (l) => !find(l, "inbox") && kinds(l).length === 5, why: "\"this\" is the widget the user pointed at" },
 ].filter((c) => !only.length || only.includes(c.name));
 
 const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
@@ -70,22 +88,30 @@ for (const c of cases) {
     const ws = new WebSocket(`ws://${addr}/ws?token=${token}`);
     await new Promise((r, j) => { ws.onopen = r; ws.onerror = j; });
     let desk = null; const msgs = []; let ended = 0;
+    const agent = c.agent || "home";
     ws.onmessage = (e) => {
       const m = JSON.parse(e.data);
       if (m.t === "desk") desk = m;
-      if (m.agent === "home" && m.t === "chat") msgs.push(m.msg);
-      if (m.agent === "home" && m.t === "chatUpdate") { const k = msgs.findIndex((x) => x.id === m.msg.id); if (k >= 0) msgs[k] = m.msg; }
-      if (m.agent === "home" && m.t === "chatDelta") { const x = msgs.find((x) => x.id === m.id); if (x) x.text += m.text; }
-      if (m.agent === "home" && m.t === "turnEnd") ended++;
+      if (m.t === "customizer" && desk) desk.customizer = m.customizer;
+      if (m.agent === agent && m.t === "chat") msgs.push(m.msg);
+      if (m.agent === agent && m.t === "chatUpdate") { const k = msgs.findIndex((x) => x.id === m.msg.id); if (k >= 0) msgs[k] = m.msg; }
+      if (m.agent === agent && m.t === "chatDelta") { const x = msgs.find((x) => x.id === m.id); if (x) x.text += m.text; }
+      if (m.agent === agent && m.t === "turnEnd") ended++;
     };
     const send = (m) => ws.send(JSON.stringify(m));
     await sleep(400);
     send({ t: "homeReset", to: c.start, space: "" });
+    if (c.seed) {
+      send({ t: "workItemAdd", project: "demo", title: "Add CSV export", start: true, space: "" });
+      await sleep(300);
+      send({ t: "workTaskAdd", title: "Pick the export format", item: csv(desk)?.ref, space: "" });
+    }
     await sleep(400);
     const before = JSON.parse(JSON.stringify(desk.desk.layouts.home));
+    const point = c.point ? find(before, c.point)?.id || "" : "";
     for (const text of c.say) {
       const want = ended + 1;
-      send({ t: "chat", agent: "home", text, view: "" });
+      send({ t: "chat", agent, text, view: "home", selection: point });
       const until = Date.now() + TURN_TIMEOUT;
       while (ended < want && Date.now() < until) await sleep(250);
       if (ended < want) { res.note = "timed out"; break; }
@@ -95,7 +121,8 @@ for (const c of cases) {
     res.tools = msgs.filter((m) => m.role === "tool").map((m) => (m.error ? "✗" : "") + m.tool);
     res.errors = msgs.filter((m) => m.role === "tool" && m.error).length;
     res.reply = msgs.filter((m) => m.role === "agent").map((m) => m.text).join(" ").replace(/\s+/g, " ").slice(0, 160);
-    res.ok = !res.note && !!c.check(l, before, res.reply, desk);
+    await sleep(300); // the customizer settles its draft when the turn ends
+    res.ok = !res.note && !!c.check(desk.desk.layouts.home, before, res.reply, desk, res.tools.map((t) => t.replace("✗", "")));
     if (!res.ok && !res.note) res.note = `layout: cols ${l.cols}, ${l.tiling}, ${(l.widgets || []).map((w) => `${w.kind}(${w.shape}${w.scope ? " " + w.scope : ""}${w.h ? " h" + w.h : ""})`).join(", ")}`;
     ws.close();
   } catch (e) { res.note = String(e); }

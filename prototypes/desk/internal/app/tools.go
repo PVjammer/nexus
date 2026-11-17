@@ -81,7 +81,7 @@ func (a *App) tools() []Tool {
 			Description: "Everything Nexus knows about a project: brief, foreman workstreams (with report paths), backlog, foreman inbox, recent events, git state, docs, Nexus items and tasks.",
 			Parameters:  obj(nil, map[string]any{"project": sprop("project id (default: your own project)")}), run: toolProjectGet},
 		{Name: "project_discover", Label: "Find projects", Kinds: H,
-			Description: "Scan the user's workspace for folders that look like projects (foreman ledgers first, then git repos with a README). Read-only.",
+			Description: "Scan the user's workspace for folders that look like projects (git repos with a README). Read-only.",
 			Parameters:  obj(nil, map[string]any{"path": sprop("folder to scan (default: the configured workspace roots)")}), run: toolProjectDiscover},
 		{Name: "project_add", Label: "Add project", Kinds: H,
 			Description: "Add a folder as a project in Nexus. Nexus only reads the folder; it never writes to it. Give a short brief (one or two sentences) in your own words from what you read.",
@@ -263,7 +263,7 @@ func (a *App) tools() []Tool {
 }
 
 func (a *App) allTools() []Tool {
-	return append(append(append(append(a.tools(), a.wikiTools()...), a.codeTools()...), a.homeTools()...), a.workTools()...)
+	return append(append(append(append(append(a.tools(), a.wikiTools()...), a.codeTools()...), a.homeTools()...), a.workTools()...), a.onboardTools()...)
 }
 
 // toolsFor is the tool set of one agent: by its kind, plus add-on tools
@@ -576,7 +576,7 @@ func toolProjectDiscover(a *App, _ *Ctx, m map[string]any) (string, error) {
 	if p := sArg(m, "path"); p != "" {
 		roots = []string{p}
 	}
-	cands := projects.Discover(roots, 6)
+	cands := projects.Discover(roots, 6, a.cfg.Foreman)
 	have := map[string]string{}
 	for _, p := range a.Projects.List() {
 		have[p.Path] = p.ID

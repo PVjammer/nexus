@@ -13,7 +13,11 @@ export type WorkTask = {
 export type WorkItem = {
   ref: string; project: string; title: string; source: string; sourceState?: string; detail?: string; report?: string;
   state: "in-progress" | "parked" | "not-started"; parkNote?: string; doneWhen?: string[]; open: number; done: number;
-  move: string; moveNote?: string; updated: string;
+  move: string; moveNote?: string; updated: string; brief?: string; unshaped?: boolean;
+};
+export type Proposal = {
+  id: string; batch: string; project: string; item?: string; title: string; why?: string; evidence?: string[];
+  assignee?: string; status: string; agent: string; created: string;
 };
 
 const STATUSES: [string, string][] = [["todo", "To do"], ["doing", "In progress"], ["blocked", "Blocked"], ["review", "In review"], ["done", "Done"]];
@@ -22,6 +26,8 @@ const statusName = Object.fromEntries(STATUSES);
 export const tasks = (): WorkTask[] => ((desk?.desk as any)?.workTasks || []) as WorkTask[];
 export const items = (): WorkItem[] => ((desk as any)?.workItems || []) as WorkItem[];
 const itemOf = (ref?: string) => items().find((w) => w.ref === ref);
+export const proposals = (): Proposal[] => ((desk?.desk as any)?.proposals || []) as Proposal[];
+const onboarded = (pid: string) => !!((desk?.desk as any)?.onboard || {})[pid];
 const taskOf = (id: string) => tasks().find((t) => t.id === id);
 
 export function needsMe(t: WorkTask) {
@@ -36,7 +42,7 @@ function waitingOn(t: WorkTask) {
 }
 const live = (t: WorkTask) => !t.item || !itemOf(t.item) || itemOf(t.item)!.state === "in-progress";
 
-type Hooks = { openWorkspace: (ref: string, task?: string) => void };
+type Hooks = { openWorkspace: (ref: string, task?: string) => void; openProject: (pid: string) => void };
 let hooks: Hooks;
 export function initWork(h_: Hooks) { hooks = h_; }
 
@@ -109,6 +115,85 @@ async function addTask(item?: WorkItem, pid?: string) {
   const title = await promptModal(item ? `New task for ${item.title}` : "New todo", item ? "The next concrete action, e.g. Review MR !41" : "e.g. Book the conference hotel");
   if (!title) return;
   await act({ t: "workTaskAdd", title, item: item?.ref, project: item ? undefined : pid });
+}
+
+// ---- setting up and shaping (the project agent does the talking) ----
+
+/** startSetup asks the project agent to look through the project for work. */
+export async function startSetup(pid: string) {
+  if (await act({ t: "onboardStart", project: pid }) === null) return;
+  hooks.openProject(pid);
+}
+
+/** shape asks the project agent to ask a few questions, then propose tasks. */
+export async function shape(w: WorkItem) {
+  if (await act({ t: "shapeStart", item: w.ref }) === null) return;
+  hooks.openWorkspace(w.ref);
+}
+const shapeBtn = (w: WorkItem, primary = false) => h("button", { class: primary ? "primary" : "", title: "The project agent asks a few questions (click an answer), then proposes the next tasks", onclick: () => shape(w) }, ic("agent"), " Shape");
+const shapeChip = () => h("span", { class: "wchip shape", title: "In progress, but nobody has said what done looks like, or there's no task yet" }, "Needs shaping");
+
+/** proposalChecklist is one batch of suggestions to tick. Ticked ones are
+ *  added; the rest are dismissed and won't be suggested again. */
+export function proposalChecklist(batch: string, o: { onDone?: () => void; compact?: boolean } = {}): HTMLElement {
+  const el = h("div", { class: "proposals" });
+  const picked = new Set<string>();
+  let init = false;
+  const draw = () => {
+    const all = proposals().filter((p) => p.batch === batch);
+    const open = all.filter((p) => p.status === "open");
+    if (!init) { open.forEach((p) => picked.add(p.id)); init = true; }
+    if (!all.length) { el.replaceChildren(); return; }
+    const forItem = all[0].item ? itemOf(all[0].item) : undefined;
+    if (!open.length) {
+      const n = all.filter((p) => p.status === "accepted").length;
+      el.replaceChildren(h("div", { class: "muted small" }, ic("check"), ` Reviewed: ${n} added, ${all.length - n} not now.`));
+      return;
+    }
+    const go = async (start: boolean) => {
+      const accept = open.filter((p) => picked.has(p.id)).map((p) => p.id);
+      const dismiss = open.filter((p) => !picked.has(p.id)).map((p) => p.id);
+      if (await act({ t: "proposalsResolve", accept, dismiss, start }) !== null) o.onDone?.();
+    };
+    el.replaceChildren(
+      h("div", { class: "prop-head" }, h("b", {}, forItem ? `Next tasks for ${forItem.title}` : `Suggested work for ${project(all[0].project)?.name || all[0].project}`),
+        h("span", { class: "muted small" }, ` · from the ${all[0].agent.startsWith("p:") ? "project agent" : "agent"}. Untick what you don't want.`)),
+      ...open.map((p) => {
+        const cb = h("input", { type: "checkbox", checked: picked.has(p.id), onchange: (e: Event) => { (e.target as HTMLInputElement).checked ? picked.add(p.id) : picked.delete(p.id); } });
+        return h("label", { class: "prop-row" }, cb,
+          h("span", { class: "prop-main" }, h("span", { class: "prop-t" }, p.title, p.item && p.assignee ? h("span", { class: "tag" }, p.assignee === "you" ? "You" : p.assignee === "agent" ? "Agent" : p.assignee) : ""),
+            p.why && !o.compact ? h("span", { class: "muted small" }, p.why) : "",
+            (p.evidence || []).length && !o.compact ? h("span", { class: "prop-ev" }, ...(p.evidence || []).slice(0, 3).map((e) => h("code", {}, e))) : ""));
+      }),
+      h("div", { class: "row" },
+        h("button", { class: "primary", onclick: () => go(false) }, forItem ? "Add selected" : "Add to my list"),
+        forItem ? "" : h("button", { title: "Add them and put them in progress", onclick: () => go(true) }, "Add and start"),
+        h("span", { class: "grow-r" }),
+        h("button", { class: "link small", onclick: () => { picked.clear(); go(false); } }, "None of these")));
+  };
+  draw();
+  const off = on("desk", () => { if (!el.isConnected && init) { off(); return; } draw(); });
+  return el;
+}
+
+/** openProposals shows a batch's checklist in a dialog (from Needs you). */
+export function openProposals(batch: string) {
+  modal((close) => h("div", { class: "modal wide" }, proposalChecklist(batch, { onDone: close }), h("div", { class: "row" }, h("span", { class: "grow" }), h("button", { onclick: close }, "Close"))));
+}
+
+/** setupList: projects with no work items yet, each with a Set up button. */
+function setupList(pid?: string): HTMLElement[] {
+  const ps = (desk?.projects || []).filter((p) => (!pid || p.id === pid) && !items().some((w) => w.project === p.id) && !proposals().some((q) => q.project === p.id && q.status === "open"));
+  if (!ps.length) return [];
+  return [h("div", { class: "hint" }, "No work items yet"),
+    ...ps.map((p) => h("div", { class: "crow" }, h("span", { class: "crow-t" }, p.name),
+      h("span", { class: "muted small crow-n" }, onboarded(p.id) ? "set-up conversation started" : "the project agent looks through it for work"),
+      h("button", { onclick: () => startSetup(p.id) }, onboarded(p.id) ? "Open" : "Set up")))];
+}
+
+function pendingChecklists(pid?: string, ref?: string): HTMLElement[] {
+  const batches = [...new Set(proposals().filter((p) => p.status === "open" && (!pid || p.project === pid) && (!ref || p.item === ref)).map((p) => p.batch))];
+  return batches.map((b) => h("div", { class: "card" }, proposalChecklist(b)));
 }
 
 // ---- the task panel (drawer) ----
@@ -195,7 +280,7 @@ export function boardList(pid?: string): HTMLElement[] {
 
 export function workItemCards(pid?: string, shape = "cards"): HTMLElement[] {
   const ws = items().filter((w) => w.state === "in-progress" && (!pid || w.project === pid));
-  if (!ws.length) return [h("div", { class: "empty-note" }, "No work items in progress. Start one from the Tasks app (Work items).")];
+  if (!ws.length) return [h("div", { class: "empty-note" }, items().length ? "No work items in progress. Start one from the Tasks app (Work items)." : "No work items yet. Open a project and press Set up: its agent looks through it for work.")];
   if (shape === "list") return ws.map((w) => h("button", { class: "crow", onclick: () => hooks.openWorkspace(w.ref) },
     h("span", { class: "crow-t" }, w.title), projTag(w.project), moveChip(w)));
   return [h("div", { class: "wi-grid" }, ...ws.map(workItemCard))];
@@ -212,10 +297,13 @@ function workItemCard(w: WorkItem): HTMLElement {
   return h("div", { class: "card wi-card" },
     h("div", { class: "card-top" }, projTag(w.project), h("span", { class: "muted small" }, w.source), h("span", { class: "grow-r" }), moveChip(w)),
     h("b", { class: "wi-title", onclick: () => hooks.openWorkspace(w.ref) }, w.title),
+    w.brief ? h("div", { class: "muted small wi-brief" }, w.brief) : "",
+    w.unshaped ? h("div", { class: "row" }, shapeChip(), h("span", { class: "muted small" }, !(w.doneWhen || []).length ? "What does done look like?" : "No tasks yet.")) : "",
     total ? h("div", { class: "wi-prog" }, h("div", { class: "bar" }, h("span", { style: { width: `${Math.round((w.done / total) * 100)}%` } })), h("span", { class: "muted small" }, `${w.done} of ${total} tasks done`)) : "",
     n ? h("button", { class: "wi-next", onclick: () => openTask(n.id) }, h("span", { class: "muted small" }, "Next"), whoChip(n), " ", n.title)
-      : h("div", { class: "muted small" }, "No next action yet."),
+      : w.unshaped ? "" : h("div", { class: "muted small" }, "No next action yet."),
     h("div", { class: "row" },
+      w.unshaped ? shapeBtn(w, true) : "",
       h("button", { onclick: () => hooks.openWorkspace(w.ref) }, "Open workspace"),
       h("button", { onclick: () => addTask(w) }, ic("plus"), " Task"),
       h("button", { title: "Hide it and its tasks until you bring it back", onclick: async () => { const note = await promptModal(`Park ${w.title}`, "Until… (optional), e.g. IT grants access"); if (note !== null) act({ t: "workItemSet", item: w.ref, state: "parked", parkNote: note || "" }); } }, "Park")));
@@ -267,7 +355,9 @@ function drawApp() {
   let body: (HTMLElement | null)[] = [];
   if (tab === "needs") body = needsList(pid);
   if (tab === "board") body = [h("div", { class: "row" }, h("button", { onclick: () => addTask(undefined, pid) }, ic("plus"), " Todo"), h("span", { class: "muted small" }, "Cards move when work happens; open one to change it.")), board(pid)];
-  if (tab === "items") body = [h("h4", {}, `In progress (${items().filter((w) => w.state === "in-progress").length})`), limitSetting(), ...workItemCards(pid), h("h4", {}, "Not in progress"), ...notInProgress(pid)];
+  if (tab === "items") body = [...pendingChecklists(pid), h("h4", {}, `In progress (${items().filter((w) => w.state === "in-progress").length})`), limitSetting(), ...workItemCards(pid), h("h4", {}, "Not in progress"), ...notInProgress(pid), ...setupList(pid),
+    h("div", { class: "row" }, h("button", { onclick: async () => { const p = pid || (desk?.projects || [])[0]?.id; if (!p) return; const t = await promptModal(`New work item in ${project(p)?.name}`, "What you want done, e.g. Add CSV export"); if (t) act({ t: "workItemAdd", project: p, title: t }); } }, ic("plus"), " Work item"),
+      pid ? h("button", { title: "The project agent looks through it again for work it hasn't suggested before", onclick: () => startSetup(pid) }, "Find more work") : "")];
   if (tab === "todos") body = todos();
   root.replaceChildren(h("div", { class: "work-app" },
     h("div", { class: "wa-head" }, h("b", {}, ic("board"), " Tasks"),
@@ -301,7 +391,8 @@ export function workItemView(ref: string, focus?: string) {
     el.replaceChildren(
       h("div", { class: "wi-head" },
         h("div", {}, h("h3", {}, w.title), h("div", { class: "muted small" }, `${w.source}${w.sourceState ? ` · ${w.sourceState}` : ""} · Nexus reads it and never changes it`)),
-        h("span", { class: "grow-r" }), moveChip(w),
+        h("span", { class: "grow-r" }), w.unshaped ? shapeChip() : "", moveChip(w),
+        w.unshaped && ts.length ? shapeBtn(w) : "",
         w.report ? h("button", { onclick: () => hooks.openWorkspace("open-report:" + w.report) }, ic("doc"), " Report") : "",
         w.state === "in-progress" ? h("button", { onclick: async () => { const note = await promptModal(`Park ${w.title}`, "Until… (optional)"); if (note !== null) act({ t: "workItemSet", item: w.ref, state: "parked", parkNote: note || "" }); } }, "Park")
           : h("button", { class: "primary", onclick: () => startItem(w) }, w.state === "parked" ? "Bring back" : "Start")),
@@ -312,8 +403,12 @@ export function workItemView(ref: string, focus?: string) {
           h("div", { class: "row" }, h("b", {}, "What's left"), h("span", { class: "grow-r" }), h("button", { onclick: () => addTask(w) }, ic("plus"), " Task")),
           ...groups.filter(([, l]) => l.length).flatMap(([g, l]) => [h("div", { class: "hint" }, `${g} · ${l.length}`), ...l.map((t) => h("button", { class: `trow${t.id === focused ? " on" : ""}`, onclick: () => { focused = t.id; draw(); } },
             h("span", { class: "trow-main" }, h("span", { class: "trow-t" }, t.title), t.status === "blocked" && blockedText(t) ? h("span", { class: "muted small" }, `after ${blockedText(t)}`) : ""), whoChip(t)))]),
-          !ts.length ? h("div", { class: "empty-note" }, "No tasks yet. Add the next concrete action, or ask the project agent to break it down.") : ""),
+          !ts.length ? h("div", { class: "empty-note" }, "No tasks yet. Add the next concrete action, or ", shapeBtn(w, true), " it: the agent asks a few questions, then proposes tasks.") : "",
+          ...pendingChecklists(undefined, w.ref)),
         h("div", {},
+          h("b", {}, "Brief"),
+          w.brief ? h("p", { class: "small" }, w.brief) : h("div", { class: "muted small" }, "Not set yet."),
+          h("button", { class: "link small", onclick: async () => { const v = await promptModal("Brief", "What it is, in a line or two: scope, constraints, who's involved", w.brief || ""); if (v !== null) act({ t: "workItemSet", item: w.ref, brief: v }); } }, "Edit"),
           h("b", {}, "Done when"),
           (w.doneWhen || []).length ? h("ul", { class: "dw" }, ...(w.doneWhen || []).map((d) => h("li", {}, d))) : h("div", { class: "muted small" }, "Not set yet."),
           h("button", { class: "link small", onclick: async () => { const v = await promptModal("Done when", "Checks separated by ; e.g. Merged; Deployed; Security signed off", (w.doneWhen || []).join("; ")); if (v !== null) act({ t: "workItemSet", item: w.ref, doneWhen: v.split(";").map((x) => x.trim()).filter(Boolean) }); } }, "Edit"),

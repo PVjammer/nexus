@@ -504,8 +504,9 @@ type Candidate struct {
 }
 
 // Discover walks the given directories (bounded depth) for folders that look
-// like projects: a foreman ledger (strong signal) or a git repo with a README.
-func Discover(roots []string, maxDepth int) []Candidate {
+// like projects: a git repo with a README. With foreman set, a foreman ledger
+// also counts (and sorts first).
+func Discover(roots []string, maxDepth int, foreman bool) []Candidate {
 	var out []Candidate
 	seen := map[string]bool{}
 	for _, r := range roots {
@@ -533,7 +534,7 @@ func Discover(roots []string, maxDepth int) []Candidate {
 				return nil
 			}
 			c := Candidate{Path: p, Name: d.Name()}
-			if st, err := os.Stat(filepath.Join(p, ".foreman", "config.toml")); err == nil && !st.IsDir() {
+			if st, err := os.Stat(filepath.Join(p, ".foreman", "config.toml")); foreman && err == nil && !st.IsDir() {
 				c.Foreman = true
 			}
 			if _, err := os.Stat(filepath.Join(p, ".git")); err == nil {

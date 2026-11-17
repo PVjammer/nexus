@@ -58,7 +58,7 @@ func (a *App) handleClient(c *client, m map[string]any, raw []byte) {
 
 	// ---- projects and the desk ----
 	case "discover":
-		reply(map[string]any{"t": "candidates", "candidates": projects.Discover(a.cfg.ScanRoots, 6)})
+		reply(map[string]any{"t": "candidates", "candidates": projects.Discover(a.cfg.ScanRoots, 6, a.cfg.Foreman)})
 	case "projectAdd":
 		p, err := a.addProject(str(m["name"]), str(m["path"]), str(m["brief"]), you)
 		if err != nil {
@@ -245,6 +245,16 @@ func (a *App) handleClient(c *client, m map[string]any, raw []byte) {
 		a.Desk.RemoveWidget(str(m["widget"]))
 	case "workTaskAdd", "workTaskUpdate", "workTaskRemove", "workItemSet", "workLimit":
 		if v, err := a.handleWork(t, m); err != nil {
+			fail(err)
+		} else {
+			reply(map[string]any{"t": "ok", "result": v})
+		}
+	case "customizerKeep", "customizerRollback":
+		if err := a.handleCustomizer(t, m); err != nil {
+			fail(err)
+		}
+	case "onboardStart", "shapeStart", "proposalsResolve", "workItemAdd":
+		if v, err := a.handleOnboard(t, m); err != nil {
 			fail(err)
 		} else {
 			reply(map[string]any{"t": "ok", "result": v})

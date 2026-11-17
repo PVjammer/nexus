@@ -42,7 +42,7 @@ func newTestApp(t *testing.T) (*App, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	a, err := New(Config{DataDir: filepath.Join(dir, "data"), WebDir: dir, Token: "tok"}, v)
+	a, err := New(Config{DataDir: filepath.Join(dir, "data"), WebDir: dir, Token: "tok", Foreman: true}, v)
 	if err != nil {
 		t.Fatal(err)
 	}

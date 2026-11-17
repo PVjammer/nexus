@@ -38,6 +38,8 @@ const P: Record<string, string> = {
   float: '<rect x="3" y="7" width="13" height="13" rx="2"/><path d="M8 7V4h13v13h-5"/>',
   zoom: '<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>',
   spark: '<path d="M12 3v4M12 17v4M3 12h4M17 12h4M6 6l2.5 2.5M15.5 15.5L18 18M6 18l2.5-2.5M15.5 8.5L18 6"/>',
+  hammer: '<path d="M14.5 4.5l5 5-2 2-5-5z"/><path d="M12.5 6.5L9 3 6 6l3.5 3.5"/><path d="M13.5 10.5L4 20"/>',
+  target: '<circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/>',
 };
 
 export function ic(name: string, title?: string, cls = ""): HTMLSpanElement {

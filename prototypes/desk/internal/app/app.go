@@ -38,6 +38,10 @@ type Config struct {
 	ScanRoots []string // where onboarding looks for projects
 	Agents    AgentFactory
 	TestHooks bool // e2e only: lets a test act as an agent without a model
+	// Foreman: read foreman ledgers (workstreams, backlog, inbox) by default
+	// in projects that have one. Off by default: Nexus doesn't assume any
+	// particular tool; a project can still switch the add-on on.
+	Foreman bool
 }
 
 type App struct {
@@ -218,7 +222,16 @@ func (a *App) refreshDetails() {
 	list := a.Projects.List()
 	next := map[string]projects.Detail{}
 	for _, p := range list {
-		next[p.ID] = projects.Read(p)
+		d := projects.Read(p)
+		if !a.foremanOn(p.Addons, d.Foreman) {
+			// Ledger view off: keep only that a ledger exists (for the add-on list).
+			d.Workstreams, d.Backlog, d.Inbox, d.Events, d.Archived = nil, nil, nil, nil, 0
+			d.LastActivity = time.Time{}
+			if d.Git != nil && len(d.Git.Commits) > 0 {
+				d.LastActivity = d.Git.Commits[0].When
+			}
+		}
+		next[p.ID] = d
 	}
 	b, _ := json.Marshal(next)
 	h := string(b)
@@ -229,6 +242,14 @@ func (a *App) refreshDetails() {
 	if changed {
 		a.broadcastDesk()
 	}
+}
+
+// foremanOn: the project's own switch if set, else the core's default.
+func (a *App) foremanOn(addons map[string]bool, has bool) bool {
+	if v, set := addons["foreman"]; set {
+		return v && has
+	}
+	return a.cfg.Foreman && has
 }
 
 func (a *App) detail(id string) (projects.Detail, bool) {

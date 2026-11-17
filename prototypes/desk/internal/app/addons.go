@@ -45,7 +45,7 @@ func (a *App) addons() []Addon {
 			defaultOn:   func(a *App, d projects.Detail) bool { return true }},
 		{ID: "foreman", Name: "Foreman ledger", Kind: "view",
 			Description: "Shows this project's foreman workstreams, backlog and inbox (read-only) and tells agents about them.",
-			defaultOn:   func(a *App, d projects.Detail) bool { return d.Foreman }},
+			defaultOn:   func(a *App, d projects.Detail) bool { return a.cfg.Foreman && d.Foreman }},
 	}
 }
 
@@ -106,6 +106,9 @@ func (a *App) setAddon(pid, id string, on bool) error {
 	// (it resumes its session, so nothing is forgotten).
 	if r := a.existingRun("p:" + pid); r != nil && !isBusy(r) {
 		r.Close()
+	}
+	if id == "foreman" {
+		go a.refreshDetails()
 	}
 	if id == "codegraph" && on {
 		go a.cg.syncProject(a, pid)

@@ -194,7 +194,7 @@ func (a *App) homeAdd(by string, e HomeEdit) (desk.LayoutWidget, error) {
 			return desk.LayoutWidget{}, fixErr("no plugin %q; plugin_list shows the ids", e.Plugin)
 		}
 	}
-	w := desk.LayoutWidget{Kind: k.Kind, Shape: k.Shapes[0], W: k.DefaultW, By: by, Why: strings.TrimSpace(e.Why), Plugin: e.Plugin, Added: time.Now()}
+	w := desk.LayoutWidget{Kind: k.Kind, Shape: k.Shapes[0], W: k.DefaultW, By: storedBy(by), Why: strings.TrimSpace(e.Why), Plugin: e.Plugin, Added: time.Now()}
 	if e.Shape != nil && *e.Shape != "" {
 		if err := a.checkShape(k, *e.Shape); err != nil {
 			return w, err
@@ -224,7 +224,7 @@ func (a *App) homeAdd(by string, e HomeEdit) (desk.LayoutWidget, error) {
 	if e.Position != nil {
 		pos = *e.Position
 	}
-	_, err := a.Desk.EditLayout("home", by+": add "+k.Label, func(l *desk.Layout, newID func() string) error {
+	_, err := a.Desk.EditLayout(a.layoutFor(by), by+": add "+k.Label, func(l *desk.Layout, newID func() string) error {
 		w.ID = newID()
 		c := w
 		l.Widgets = placeAt(l.Widgets, &c, pos)
@@ -239,7 +239,7 @@ func (a *App) homeAdd(by string, e HomeEdit) (desk.LayoutWidget, error) {
 // homeChange changes a widget's shape, scope, size or position.
 func (a *App) homeChange(by, id string, e HomeEdit) error {
 	var label string
-	_, err := a.Desk.EditLayout("home", by+": change widget", func(l *desk.Layout, _ func() string) error {
+	_, err := a.Desk.EditLayout(a.layoutFor(by), by+": change widget", func(l *desk.Layout, _ func() string) error {
 		i := widgetIndex(l, id)
 		if i < 0 {
 			return noWidget(l, id)
@@ -272,7 +272,7 @@ func (a *App) homeChange(by, id string, e HomeEdit) error {
 			}
 			w.H = *e.H
 		}
-		if by == "agent" {
+		if by != "you" {
 			w.By, w.Why = "agent", strings.TrimSpace(e.Why)
 		}
 		if e.Position != nil {
@@ -292,7 +292,7 @@ func (a *App) homeChange(by, id string, e HomeEdit) error {
 
 func (a *App) homeRemove(by, id, why string) error {
 	var label string
-	_, err := a.Desk.EditLayout("home", by+": remove widget", func(l *desk.Layout, _ func() string) error {
+	_, err := a.Desk.EditLayout(a.layoutFor(by), by+": remove widget", func(l *desk.Layout, _ func() string) error {
 		i := widgetIndex(l, id)
 		if i < 0 {
 			return noWidget(l, id)
@@ -317,7 +317,7 @@ func (a *App) homeGrid(by string, cols *int, tiling, why string) error {
 	if tiling != "" && tiling != "flow" && tiling != "tile" {
 		return fixErr("tiling must be flow (the page scrolls) or tile (widgets fill the screen)")
 	}
-	_, err := a.Desk.EditLayout("home", by+": grid", func(l *desk.Layout, _ func() string) error {
+	_, err := a.Desk.EditLayout(a.layoutFor(by), by+": grid", func(l *desk.Layout, _ func() string) error {
 		if cols != nil {
 			l.Cols = *cols
 		}
@@ -340,7 +340,7 @@ func (a *App) homeReset(by, to, why string) error {
 		return fixErr("to must be one of: %s", strings.Join(homePresets, ", "))
 	}
 	now := time.Now()
-	_, err := a.Desk.EditLayout("home", by+": reset to "+to, func(l *desk.Layout, newID func() string) error {
+	_, err := a.Desk.EditLayout(a.layoutFor(by), by+": reset to "+to, func(l *desk.Layout, newID func() string) error {
 		var chat *desk.LayoutWidget
 		var plugins []*desk.LayoutWidget
 		for _, w := range l.Widgets {
@@ -352,7 +352,7 @@ func (a *App) homeReset(by, to, why string) error {
 			}
 		}
 		if chat == nil {
-			chat = &desk.LayoutWidget{ID: newID(), Kind: "chat", Shape: "minimal", W: 4, By: by, Added: now}
+			chat = &desk.LayoutWidget{ID: newID(), Kind: "chat", Shape: "minimal", W: 4, By: storedBy(by), Added: now}
 		}
 		*l = desk.Layout{Cols: 3, Tiling: "flow", Widgets: []*desk.LayoutWidget{chat}}
 		if to == "dashboard" {
@@ -360,7 +360,7 @@ func (a *App) homeReset(by, to, why string) error {
 				kind, shape string
 				w           int
 			}{{"needs", "list", 2}, {"running", "list", 1}, {"workitems", "cards", 2}, {"inbox", "list", 1}, {"projects", "cards", 3}} {
-				l.Widgets = append(l.Widgets, &desk.LayoutWidget{ID: newID(), Kind: s.kind, Shape: s.shape, W: s.w, By: by, Why: why, Added: now})
+				l.Widgets = append(l.Widgets, &desk.LayoutWidget{ID: newID(), Kind: s.kind, Shape: s.shape, W: s.w, By: storedBy(by), Why: why, Added: now})
 			}
 			l.Widgets = append(l.Widgets, plugins...)
 		}
@@ -373,7 +373,7 @@ func (a *App) homeReset(by, to, why string) error {
 }
 
 func (a *App) homeUndo(by string) (string, error) {
-	label, ok := a.Desk.UndoLayout("home")
+	label, ok := a.Desk.UndoLayout(a.layoutFor(by))
 	if !ok {
 		return "", fixErr("nothing to undo on the home screen")
 	}
@@ -385,8 +385,14 @@ func (a *App) homeUndo(by string) (string, error) {
 // agent made it.
 func (a *App) homeChanged(by, what, why string) {
 	actor := you
-	if by == "agent" {
+	switch by {
+	case "agent":
 		actor = "home agent"
+	case byCustomizer:
+		actor = CustomizerName
+		a.Log.Add(actionlog.Entry{Actor: actor, Action: "home (draft): " + what, Target: truncate(why, 80)})
+		a.broadcastCustomizer()
+		return
 	}
 	a.Log.Add(actionlog.Entry{Actor: actor, Action: "home: " + what, Target: truncate(why, 80)})
 	if by == "agent" {
@@ -396,8 +402,10 @@ func (a *App) homeChanged(by, what, why string) {
 
 // describeHome is the layout as short text: for home_show and the home
 // agent's turn context.
-func (a *App) describeHome() string {
-	l := a.Desk.Layout("home")
+func (a *App) describeHome() string { return a.describeLayout("home") }
+
+func (a *App) describeLayout(name string) string {
+	l := a.Desk.Layout(name)
 	var b strings.Builder
 	fmt.Fprintf(&b, "home screen: %d columns, %s tiling, %d widget(s)\n", l.Cols, l.Tiling, len(l.Widgets))
 	for i, w := range l.Widgets {
@@ -454,10 +462,12 @@ func (a *App) homeTools() []Tool {
 	reason := sprop("why, in a few words of the user's request (shown to the user)")
 	pos := iprop("1-based position; 1 = top. Position 2 is right under the prompt box. Leave out to add at the end")
 	return []Tool{
-		{Name: "home_show", Label: "Home screen", Kinds: H,
+		{Name: "home_show", Label: "Home screen", Kinds: HC,
 			Description: "See the home screen: its grid and each widget (id, kind, shape, scope, size), top to bottom. Call it before changing the home screen.",
-			Parameters:  obj(nil, map[string]any{}), run: func(a *App, _ *Ctx, _ map[string]any) (string, error) { return a.describeHome(), nil }},
-		{Name: "home_add", Label: "Add widget", Kinds: H,
+			Parameters:  obj(nil, map[string]any{}), run: func(a *App, c *Ctx, _ map[string]any) (string, error) {
+				return a.describeLayout(a.layoutFor(byOf(c))), nil
+			}},
+		{Name: "home_add", Label: "Add widget", Kinds: HC,
 			Description: "Add a widget to the home screen. Only when the user asks for something on their home screen or dashboard.",
 			Parameters: obj([]string{"kind", "reason"}, map[string]any{
 				"kind":     eprop("what it shows (see the home-layout skill for each)", kindNames(false)...),
@@ -467,7 +477,7 @@ func (a *App) homeTools() []Tool {
 				"h":        iprop("rows tall, 1-4; 0 = as tall as it needs (default)"),
 				"position": pos, "reason": reason,
 			}), run: toolHomeAdd},
-		{Name: "home_change", Label: "Change widget", Kinds: H,
+		{Name: "home_change", Label: "Change widget", Kinds: HC,
 			Description: "Change one widget: its shape, project, width, height or position. Give only what changes.",
 			Parameters: obj([]string{"id", "reason"}, map[string]any{
 				"id":       sprop("widget id from home_show, e.g. w12"),
@@ -477,25 +487,25 @@ func (a *App) homeTools() []Tool {
 				"h":        iprop("rows tall, 1-4; 0 = as tall as it needs"),
 				"position": pos, "reason": reason,
 			}), run: toolHomeChange},
-		{Name: "home_remove", Label: "Remove widget", Kinds: H,
+		{Name: "home_remove", Label: "Remove widget", Kinds: HC,
 			Description: "Take a widget off the home screen. Its data isn't touched.",
 			Parameters:  obj([]string{"id", "reason"}, map[string]any{"id": sprop("widget id from home_show"), "reason": reason}), run: toolHomeRemove},
-		{Name: "home_grid", Label: "Home grid", Kinds: H,
+		{Name: "home_grid", Label: "Home grid", Kinds: HC,
 			Description: "Set the home grid: how many columns, and the tiling (flow: the page scrolls; tile: widgets fill the screen like a tiling window manager).",
 			Parameters: obj([]string{"reason"}, map[string]any{
 				"cols": iprop("1-4"), "tiling": eprop("", "flow", "tile"), "reason": reason,
 			}), run: toolHomeGrid},
-		{Name: "home_reset", Label: "Reset home", Kinds: H,
+		{Name: "home_reset", Label: "Reset home", Kinds: HC,
 			Description: "Replace the whole home screen with a preset: 'prompt' (just the prompt box) or 'dashboard' (prompt, needs you, running, work items, inbox, projects). Plugin widgets stay with 'dashboard'.",
 			Parameters:  obj([]string{"to", "reason"}, map[string]any{"to": eprop("", homePresets...), "reason": reason}), run: toolHomeReset},
-		{Name: "home_undo", Label: "Undo home change", Kinds: H,
+		{Name: "home_undo", Label: "Undo home change", Kinds: HC,
 			Description: "Undo the last change to the home screen (yours or the user's). Use when the user says 'undo that' about the home screen.",
-			Parameters:  obj(nil, map[string]any{}), run: func(a *App, _ *Ctx, _ map[string]any) (string, error) {
-				l, err := a.homeUndo("agent")
+			Parameters:  obj(nil, map[string]any{}), run: func(a *App, c *Ctx, _ map[string]any) (string, error) {
+				l, err := a.homeUndo(byOf(c))
 				if err != nil {
 					return "", err
 				}
-				return "undid: " + l + "\n" + a.describeHome(), nil
+				return "undid: " + l + "\n" + a.describeLayout(a.layoutFor(byOf(c))), nil
 			}},
 	}
 }
@@ -532,18 +542,18 @@ func needReason(m map[string]any) error {
 	return nil
 }
 
-func toolHomeAdd(a *App, _ *Ctx, m map[string]any) (string, error) {
+func toolHomeAdd(a *App, c *Ctx, m map[string]any) (string, error) {
 	if err := needReason(m); err != nil {
 		return "", err
 	}
-	w, err := a.homeAdd("agent", editFromArgs(m))
+	w, err := a.homeAdd(byOf(c), editFromArgs(m))
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("added %s (%s %s). The user can undo it.\n%s", w.ID, w.Kind, w.Shape, a.describeHome()), nil
+	return fmt.Sprintf("added %s (%s %s). %s\n%s", w.ID, w.Kind, w.Shape, afterNote(c), a.describeLayout(a.layoutFor(byOf(c)))), nil
 }
 
-func toolHomeChange(a *App, _ *Ctx, m map[string]any) (string, error) {
+func toolHomeChange(a *App, c *Ctx, m map[string]any) (string, error) {
 	if err := needReason(m); err != nil {
 		return "", err
 	}
@@ -551,23 +561,23 @@ func toolHomeChange(a *App, _ *Ctx, m map[string]any) (string, error) {
 	if e.Shape == nil && e.Project == nil && e.W == nil && e.H == nil && e.Position == nil {
 		return "", fixErr("nothing to change: give shape, project, w, h or position")
 	}
-	if err := a.homeChange("agent", sArg(m, "id"), e); err != nil {
+	if err := a.homeChange(byOf(c), sArg(m, "id"), e); err != nil {
 		return "", err
 	}
-	return "changed. " + a.describeHome(), nil
+	return "changed. " + a.describeLayout(a.layoutFor(byOf(c))), nil
 }
 
-func toolHomeRemove(a *App, _ *Ctx, m map[string]any) (string, error) {
+func toolHomeRemove(a *App, c *Ctx, m map[string]any) (string, error) {
 	if err := needReason(m); err != nil {
 		return "", err
 	}
-	if err := a.homeRemove("agent", sArg(m, "id"), sArg(m, "reason")); err != nil {
+	if err := a.homeRemove(byOf(c), sArg(m, "id"), sArg(m, "reason")); err != nil {
 		return "", err
 	}
-	return "removed. " + a.describeHome(), nil
+	return "removed. " + a.describeLayout(a.layoutFor(byOf(c))), nil
 }
 
-func toolHomeGrid(a *App, _ *Ctx, m map[string]any) (string, error) {
+func toolHomeGrid(a *App, c *Ctx, m map[string]any) (string, error) {
 	if err := needReason(m); err != nil {
 		return "", err
 	}
@@ -575,20 +585,20 @@ func toolHomeGrid(a *App, _ *Ctx, m map[string]any) (string, error) {
 	if cols == nil && sArg(m, "tiling") == "" {
 		return "", fixErr("give cols (1-4) and/or tiling (flow or tile)")
 	}
-	if err := a.homeGrid("agent", cols, sArg(m, "tiling"), sArg(m, "reason")); err != nil {
+	if err := a.homeGrid(byOf(c), cols, sArg(m, "tiling"), sArg(m, "reason")); err != nil {
 		return "", err
 	}
-	return "done. " + a.describeHome(), nil
+	return "done. " + a.describeLayout(a.layoutFor(byOf(c))), nil
 }
 
-func toolHomeReset(a *App, _ *Ctx, m map[string]any) (string, error) {
+func toolHomeReset(a *App, c *Ctx, m map[string]any) (string, error) {
 	if err := needReason(m); err != nil {
 		return "", err
 	}
-	if err := a.homeReset("agent", sArg(m, "to"), sArg(m, "reason")); err != nil {
+	if err := a.homeReset(byOf(c), sArg(m, "to"), sArg(m, "reason")); err != nil {
 		return "", err
 	}
-	return "done. " + a.describeHome(), nil
+	return "done. " + a.describeLayout(a.layoutFor(byOf(c))), nil
 }
 
 // ---- from the shell (you) ----

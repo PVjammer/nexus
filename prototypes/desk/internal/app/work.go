@@ -32,21 +32,25 @@ var statusName = map[string]string{"todo": "To do", "doing": "In progress", "blo
 // WorkItem is a work item as Nexus sees it: read from its source, plus what
 // Nexus tracks about it and its tasks.
 type WorkItem struct {
-	Ref         string    `json:"ref"`
-	Project     string    `json:"project"`
-	Title       string    `json:"title"`
-	Source      string    `json:"source"`                // foreman workstream | foreman backlog | nexus list
-	SourceState string    `json:"sourceState,omitempty"` // what the source says (e.g. working · needs-input)
-	Detail      string    `json:"detail,omitempty"`
-	Report      string    `json:"report,omitempty"` // app path
-	State       string    `json:"state"`            // in-progress | parked | not-started
-	ParkNote    string    `json:"parkNote,omitempty"`
-	DoneWhen    []string  `json:"doneWhen,omitempty"`
-	Open        int       `json:"open"`
-	Done        int       `json:"done"`
-	Move        string    `json:"move"` // you | agent | waiting | blocked | ready | none
-	MoveNote    string    `json:"moveNote,omitempty"`
-	Updated     time.Time `json:"updated"`
+	Ref         string   `json:"ref"`
+	Project     string   `json:"project"`
+	Title       string   `json:"title"`
+	Source      string   `json:"source"`                // project list | foreman workstream | foreman backlog
+	SourceState string   `json:"sourceState,omitempty"` // what the source says (e.g. working · needs-input)
+	Detail      string   `json:"detail,omitempty"`
+	Report      string   `json:"report,omitempty"` // app path
+	State       string   `json:"state"`            // in-progress | parked | not-started
+	ParkNote    string   `json:"parkNote,omitempty"`
+	DoneWhen    []string `json:"doneWhen,omitempty"`
+	Brief       string   `json:"brief,omitempty"`
+	// Unshaped: in progress but nobody has said what done looks like, or
+	// there's no task yet. The Shape button asks the agent to fix that.
+	Unshaped bool      `json:"unshaped,omitempty"`
+	Open     int       `json:"open"`
+	Done     int       `json:"done"`
+	Move     string    `json:"move"` // you | agent | waiting | blocked | ready | none
+	MoveNote string    `json:"moveNote,omitempty"`
+	Updated  time.Time `json:"updated"`
 }
 
 func shortHash(s string) string {
@@ -61,11 +65,11 @@ func (a *App) workItems() []WorkItem {
 	seen := map[string]bool{}
 	add := func(w WorkItem, defState string) {
 		if t := snap.Tracked[w.Ref]; t != nil && t.State != "" {
-			w.State, w.ParkNote, w.DoneWhen = t.State, t.ParkNote, t.DoneWhen
+			w.State, w.ParkNote, w.DoneWhen, w.Brief = t.State, t.ParkNote, t.DoneWhen, t.Brief
 		} else {
 			w.State = defState
 			if t != nil {
-				w.DoneWhen = t.DoneWhen
+				w.DoneWhen, w.Brief = t.DoneWhen, t.Brief
 			}
 		}
 		seen[w.Ref] = true
@@ -94,7 +98,7 @@ func (a *App) workItems() []WorkItem {
 		if it.State != "open" || it.Kind != "task" {
 			continue
 		}
-		add(WorkItem{Ref: "item:" + it.ID, Project: it.Project, Title: it.Title, Source: "nexus list", Detail: oneLine(it.Body, 200), Updated: it.Created}, "not-started")
+		add(WorkItem{Ref: "item:" + it.ID, Project: it.Project, Title: it.Title, Source: "project list", Detail: oneLine(it.Body, 200), Updated: it.Created}, "not-started")
 	}
 	// Tasks pointing at a work item the source no longer lists (a workstream
 	// closed, a backlog line ticked) keep a home here.
@@ -105,6 +109,7 @@ func (a *App) workItems() []WorkItem {
 	}
 	for i := range out {
 		a.fillMove(&out[i], snap.WorkTasks)
+		out[i].Unshaped = out[i].State == "in-progress" && (len(out[i].DoneWhen) == 0 || out[i].Open+out[i].Done == 0)
 	}
 	rank := map[string]int{"in-progress": 0, "parked": 1, "not-started": 2}
 	sort.SliceStable(out, func(i, j int) bool { return rank[out[i].State] < rank[out[j].State] })
@@ -250,15 +255,25 @@ type TaskEdit struct {
 	Why                                                         string
 }
 
+// checkItemRef finds a work item by ref, or by its exact title when that's
+// unique (small models remember titles better than refs).
 func (a *App) checkItemRef(ref string) (WorkItem, error) {
+	ref = strings.TrimSpace(ref)
 	var refs []string
+	var byTitle []WorkItem
 	for _, w := range a.workItems() {
 		if w.Ref == ref {
 			return w, nil
 		}
+		if normTitle(w.Title) == normTitle(ref) {
+			byTitle = append(byTitle, w)
+		}
 		if len(refs) < 12 {
 			refs = append(refs, w.Ref)
 		}
+	}
+	if len(byTitle) == 1 {
+		return byTitle[0], nil
 	}
 	return WorkItem{}, fixErr("no work item %q. Call work_items for refs; some now: %s", ref, strings.Join(refs, ", "))
 }
@@ -383,7 +398,7 @@ func (a *App) workTaskUpdate(by, project, id string, e TaskEdit) (desk.WorkTask,
 	return nt, err
 }
 
-func (a *App) workItemSet(by, project, ref, state, note string, doneWhen *[]string, why string) (desk.Tracked, error) {
+func (a *App) workItemSet(by, project, ref, state, note string, doneWhen *[]string, brief *string, why string) (desk.Tracked, error) {
 	w, err := a.checkItemRef(ref)
 	if err != nil {
 		return desk.Tracked{}, err
@@ -394,6 +409,7 @@ func (a *App) workItemSet(by, project, ref, state, note string, doneWhen *[]stri
 	if state != "" && !contains(itemStates, state) {
 		return desk.Tracked{}, fixErr("state must be one of: %s", strings.Join(itemStates, ", "))
 	}
+	ref = w.Ref
 	t := a.Desk.Track(ref, func(t *desk.Tracked) {
 		if state != "" {
 			t.State = state
@@ -406,6 +422,9 @@ func (a *App) workItemSet(by, project, ref, state, note string, doneWhen *[]stri
 		}
 		if doneWhen != nil {
 			t.DoneWhen = *doneWhen
+		}
+		if brief != nil {
+			t.Brief = strings.TrimSpace(*brief)
 		}
 	})
 	what := "updated"
@@ -511,6 +530,9 @@ func (a *App) describeItems(project string, all bool) string {
 		if w.Report != "" {
 			rep = " report=" + w.Report
 		}
+		if w.Unshaped {
+			rep += " · needs shaping"
+		}
 		fmt.Fprintf(&b, "- %s · %q · %s · %s · move: %s · tasks %d open, %d done%s\n", w.Ref, w.Title, w.Source, state, firstNonEmpty(w.MoveNote, w.Move), w.Open, w.Done, rep)
 	}
 	if b.Len() == 0 {
@@ -611,10 +633,11 @@ func (a *App) workTools() []Tool {
 				"due": sprop("YYYY-MM-DD, or '' for none"), "note": sprop("a short note"), "reason": reason,
 			}), run: toolWorkTaskUpdate},
 		{Name: "work_item_set", Label: "Work item state", Kinds: HP,
-			Description: "Start, park or stop tracking a work item in Nexus (the source is never changed), and set its done-when list.",
+			Description: "Start, park or stop tracking a work item in Nexus (the source is never changed), and set its done-when list and brief.",
 			Parameters: obj([]string{"item", "reason"}, map[string]any{
 				"item": sprop("work item ref"), "state": eprop("in-progress, parked (out of the way until something happens) or not-started", itemStates...),
-				"park_note": sprop("when parking: what it waits on, e.g. 'until IT grants access'"), "done_when": aprop("what done looks like, 2-5 short checks", sprop("")), "reason": reason,
+				"park_note": sprop("when parking: what it waits on, e.g. 'until IT grants access'"), "done_when": aprop("what done looks like, 2-5 short checks", sprop("")),
+				"brief": sprop("what the work is, in 1-3 lines from what the user told you: scope, constraints, who's involved"), "reason": reason,
 			}), run: toolWorkItemSet},
 	}
 }
@@ -666,7 +689,7 @@ func toolWorkItemSet(a *App, c *Ctx, m map[string]any) (string, error) {
 	if err := needReason(m); err != nil {
 		return "", err
 	}
-	t, err := a.workItemSet(agentName(c), c.Project.ID, sArg(m, "item"), sArg(m, "state"), sArg(m, "park_note"), optStrs(m, "done_when"), sArg(m, "reason"))
+	t, err := a.workItemSet(agentName(c), c.Project.ID, sArg(m, "item"), sArg(m, "state"), sArg(m, "park_note"), optStrs(m, "done_when"), optStr(m, "brief"), sArg(m, "reason"))
 	if err != nil {
 		return "", err
 	}
@@ -712,7 +735,7 @@ func (a *App) handleWork(t string, m map[string]any) (any, error) {
 		a.workChanged("you", "set the in-progress limit", fmt.Sprint(n), "")
 		return nil, nil
 	case "workItemSet":
-		return a.workItemSet("you", "", str(m["item"]), str(m["state"]), str(m["parkNote"]), optStrs(m, "doneWhen"), "")
+		return a.workItemSet("you", "", str(m["item"]), str(m["state"]), str(m["parkNote"]), optStrs(m, "doneWhen"), optStr(m, "brief"), "")
 	}
 	return nil, fmt.Errorf("unknown %s", t)
 }
