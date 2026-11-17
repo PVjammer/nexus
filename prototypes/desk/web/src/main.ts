@@ -342,8 +342,8 @@ registerKind("projects", { draw: (c) => {
 initHome({
   greeting: () => {
     if (isFirstRun()) return h("div", { class: "hero" },
-      h("h1", {}, "Let's set up your desk."),
-      h("p", {}, "Nexus is where you plan and do project work with agents. Tell the home agent what you work on: it can scan your workspace for projects (foreman ledgers and git repos), read them, and arrange this screen with you."),
+      h("h1", {}, "Let's set up Nexus."),
+      h("p", {}, "Nexus is where you plan and do project work with agents. Tell the home agent what you work on: it can scan your workspace for projects (git repos), read them, and arrange this screen with you. Then open each project and press Set up: its agent looks through it for work and asks what you want to do."),
       h("p", { class: "muted" }, "Nexus only reads your project folders. Its own state lives in its data directory."));
     const run = desk?.running || [];
     return h("div", { class: "greet" },
