@@ -84,7 +84,7 @@
         changed = true;
         if (t.unblockTo) { setStatus(t, t.unblockTo, 'board', 'What it waited on is done.'); t.waitDays = 0; }
         else if (t.assignee === 'agent' && t.live) { setStatus(t, 'todo', 'board', 'Unblocked. It uses your credentials on a live system, so it waits for your start.'); }
-        else if (t.assignee === 'agent') { setStatus(t, 'doing', 'agent', 'Unblocked and stays in its own workspace, so it started on its own.'); }
+        else if (t.assignee === 'agent') { setStatus(t, 'doing', 'agent', 'Unblocked and stays in its own environment, so it started on its own.'); }
         else setStatus(t, 'todo', 'board', 'What it waited on is done.');
       }
     }
@@ -389,7 +389,7 @@
         w.rounds.push({ n: 3, when: 'Mon Nov 16, 15:30', by: 'Security reviewer', closed: false, raw: 'Thanks, the rotation answer works and the pins look good. Last item: admin actions (user role changes, report deletion) need an audit log. Please enable it and send us a sample entry.', asks: [{ text: 'Enable audit logging for admin actions', task: a.id }, { text: 'Send a sample audit entry', task: b.id }] });
         w.doneWhen[2].by = [d.id];
         w.watcher.log.unshift('Mon 15:30  new comment from security, read as 2 asks');
-        feed('watcher', 'New comment on SEC-431, read as 2 asks', 'One agent task (audit logging) started in its workspace; one for you after it.', 'sec431');
+        feed('watcher', 'New comment on SEC-431, read as 2 asks', 'One agent task (audit logging) started in its environment; one for you after it.', 'sec431');
         toast('Security replied. The watcher split it into 2 asks; the agent started the code change.');
       } },
     any: { label: 'The agent finishes another task', ok: () => !!anyAgentTask(), hint: 'No other agent task is running',
@@ -526,7 +526,7 @@
       const t = T('n7'); if (!needWi(sc) || needWi(sc).id !== 'nex12') return empty('Only the NEX-12 build is in this mock.');
       return `<div class="mr-h"><strong>Jira plugin, against a sandbox</strong>${chip(t)}</div>
         <ul class="steps">${t.steps.map((s, i) => `<li class="${i < t.stepsDone ? 'ok' : i === t.stepsDone && t.status === 'doing' ? 'now' : ''}">${i < t.stepsDone ? '✓' : i === t.stepsDone && t.status === 'doing' ? '◐' : '○'} ${esc(s)}</li>`).join('')}</ul>
-        <div class="tp-actions">${t.status === 'review' && t.reviewer === 'you' ? `<button class="btn primary small" data-act="open-task" data-id="n7">Review it</button>` : ''}${t.assignee === 'agent' && t.status === 'doing' ? `<button class="btn small" data-act="take" data-id="n7">Take it</button>` : ''}${t.took && t.status !== 'done' ? `<button class="btn small" data-act="handback" data-id="n7">Hand back</button>` : ''}<span class="muted small">branch <code>fm/jira-source</code> · agent's workspace</span></div>`;
+        <div class="tp-actions">${t.status === 'review' && t.reviewer === 'you' ? `<button class="btn primary small" data-act="open-task" data-id="n7">Review it</button>` : ''}${t.assignee === 'agent' && t.status === 'doing' ? `<button class="btn small" data-act="take" data-id="n7">Take it</button>` : ''}${t.took && t.status !== 'done' ? `<button class="btn small" data-act="handback" data-id="n7">Hand back</button>` : ''}<span class="muted small">branch <code>fm/jira-source</code> · agent's environment</span></div>`;
     },
     design: (sc) => {
       if (!needWi(sc) || needWi(sc).id !== 'nex12') return empty('Only the NEX-12 design doc is in this mock.');
@@ -562,7 +562,7 @@
       const w = needWi(sc); if (!w || !w.ws) return empty('No agent session for this work item.');
       const sp = 'wi:' + w.id; const susp = w.ws.state === 'suspended'; const away = w.ws.whileAway || [];
       return `<div class="chat">
-        <div class="small muted">Session ${esc(w.ws.state === 'running' ? 'running' : w.ws.state === 'resumed' ? 'open' : w.ws.state === 'closed' ? 'closed' : 'suspended ' + w.ws.since)} · branch <code>${esc(w.ws.branch)}</code> · agent's workspace</div>
+        <div class="small muted">Session ${esc(w.ws.state === 'running' ? 'running' : w.ws.state === 'resumed' ? 'open' : w.ws.state === 'closed' ? 'closed' : 'suspended ' + w.ws.since)} · branch <code>${esc(w.ws.branch)}</code> · agent's environment</div>
         ${susp ? `<div class="msg sys">Suspended. The branch, notes and transcript are kept. <button class="link" data-act="resume-ws" data-id="${w.id}">Resume where it stopped</button></div>` : ''}
         ${away.length ? `<div class="msg agent"><strong>${susp ? 'Before I stopped:' : 'While you were away:'}</strong><ul>${away.map((a) => `<li>${esc(a)}</li>`).join('')}</ul></div>` : ''}
         ${!susp && w.ws.state !== 'closed' ? `<div class="msg agent">Anything you want to take over? Everything I've done is on <code>${esc(w.ws.branch)}</code> and in the task notes.</div>` : ''}
