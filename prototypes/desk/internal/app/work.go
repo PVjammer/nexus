@@ -631,6 +631,13 @@ func (a *App) workTools() []Tool {
 				if c.inProject() {
 					p = c.Project.ID
 				}
+				if item != "" {
+					w, err := a.checkItemRef(item) // a ref or an exact title
+					if err != nil {
+						return "", err
+					}
+					item = w.Ref
+				}
 				nm, done := bArg(m, "needs_me"), bArg(m, "include_done")
 				live := a.liveTaskFn()
 				return a.describeTasks(func(t *desk.WorkTask) bool {

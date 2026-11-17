@@ -465,7 +465,7 @@ func (a *App) onboardTools() []Tool {
 				return strings.TrimSpace(b.String()), nil
 			}},
 		{Name: "work_item_add", Label: "Add work item", Kinds: HP,
-			Description: "Add a work item the user asked for in their own words (\"I also want to add dark mode\"). Things you found yourself go through work_propose instead.",
+			Description: "Add a work item the user asked for in their own words (\"I also want to add dark mode\"). A work item is a goal the project works toward, not a step or a wait: next steps and things the user is waiting on are tasks (work_task_add). Things you found yourself go through work_propose instead.",
 			Parameters: obj([]string{"title", "reason"}, map[string]any{
 				"project": sprop("project id (default: yours)"), "title": sprop("short, starting with a verb"),
 				"brief": sprop("what the user said about it, in a line or two"), "start": bprop("true if the user is working on it now"), "reason": reason,

@@ -176,3 +176,11 @@ func TestUpdatingBlockersDoesNotDeadlock(t *testing.T) {
 		t.Fatal(err) // the task panel's "waits on" goes the same way
 	}
 }
+
+func TestWorkTasksAcceptsATitle(t *testing.T) {
+	a, _ := newTestApp(t)
+	mustCall(t, a, "home", "work_task_add", map[string]any{"item": "ws:alpha/ws-one", "title": "Pick the date", "reason": "r"})
+	if out := mustCall(t, a, "home", "work_tasks", map[string]any{"item": "ws-one"}); !strings.Contains(out, "Pick the date") {
+		t.Fatalf("listing by title: %s", out)
+	}
+}
