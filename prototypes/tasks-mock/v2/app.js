@@ -6,7 +6,7 @@
 
   let S;
   let RENDERED = {};
-  const ui = { space: 'home', page: null, drawer: null, from: null, after: null, modal: null, confirm: null, pop: null, menu: null, edit: false, chat: {}, more: {}, appScope: 'all' };
+  const ui = { space: 'home', page: null, drawer: null, from: null, after: null, modal: null, confirm: null, pop: null, menu: null, edit: false, more: {}, chats: null, focusTask: null, appScope: 'all' };
 
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const T = (id) => S.tasks.find((t) => t.id === id);
@@ -139,17 +139,18 @@
     mr: { label: 'Merge request', rule: 'the MR in this work item, with its checks and diff' },
     build: { label: 'Build progress', rule: 'the steps of the agent\'s build, live' },
     design: { label: 'Design doc', rule: 'the design doc and the open question on it' },
-    chat: { label: 'Agent', rule: 'the agent session for this work item' },
+    chat: { label: 'Agent', any: true, shapes: ['minimal', 'conversation'], rule: 'a conversation with the agent: the home agent on Home, the project agent in a project, the session in a workspace' },
   };
-  const SHAPE_NAME = { list: 'List', compact: 'Compact', board: 'Board', agenda: 'Agenda', groups: 'Grouped by whose move', todos: 'Todo list', cards: 'Cards', wlist: 'List', feed: 'Feed' };
+  const SHAPE_NAME = { list: 'List', compact: 'Compact', board: 'Board', agenda: 'Agenda', groups: 'Grouped by whose move', todos: 'Todo list', cards: 'Cards', wlist: 'List', feed: 'Feed', minimal: 'Minimal', conversation: 'Conversation' };
 
   // ---------- layouts: every space is a list of widgets ----------
-  function mkW(o) { return Object.assign({ id: 'w' + (++S.seq), scope: 'inherit', size: 1, by: 'you', when: clockShort() }, o); }
+  function mkW(o) { return Object.assign({ id: 'w' + (++S.seq), scope: 'inherit', size: 1, h: 'auto', by: 'you', when: clockShort() }, o); }
   function template(sp) {
     const L = (arr) => arr.map((o) => mkW(Object.assign({ by: 'default' }, o)));
-    if (sp === 'home') return L([{ q: 'needs', shape: 'list', size: 2 }, { q: 'since', shape: 'feed', size: 1 }, { q: 'items', shape: 'cards', size: 2 }, { q: 'upnext', shape: 'wlist', size: 1 }, { q: 'todos', shape: 'todos', size: 1 }, { q: 'agents', shape: 'compact', size: 1 }, { q: 'waiting', shape: 'compact', size: 1 }]);
-    if (sp === 'p:personal') return L([{ q: 'needs', shape: 'list', size: 2 }, { q: 'todos', shape: 'todos', size: 1 }]);
-    if (sp.startsWith('p:')) return L([{ q: 'needs', shape: 'list', size: 2 }, { q: 'since', shape: 'feed', size: 1 }, { q: 'items', shape: 'cards', size: 2 }, { q: 'upnext', shape: 'wlist', size: 1 }, { q: 'waiting', shape: 'compact', size: 1 }, { q: 'agents', shape: 'compact', size: 1 }]);
+    const chatTop = { q: 'chat', shape: 'minimal', size: 3 };
+    if (sp === 'home') return L([chatTop]);
+    if (sp === 'p:personal') return L([chatTop, { q: 'needs', shape: 'list', size: 2 }, { q: 'todos', shape: 'todos', size: 1 }]);
+    if (sp.startsWith('p:')) return L([chatTop, { q: 'needs', shape: 'list', size: 2 }, { q: 'since', shape: 'feed', size: 1 }, { q: 'items', shape: 'cards', size: 2 }, { q: 'upnext', shape: 'wlist', size: 1 }, { q: 'waiting', shape: 'compact', size: 1 }, { q: 'agents', shape: 'compact', size: 1 }]);
     const id = sp.slice(3);
     const ag = (o, why) => Object.assign(o, { by: 'agent', why });
     const extra = {
@@ -158,8 +159,9 @@
       jobeval: [ag({ q: 'doc', size: 2 }, 'The agent opened it: 3 sections changed since you last read it.'), { q: 'donewhen', size: 1 }],
       sec431: [ag({ q: 'thread', size: 2 }, 'The agent opened it: security replied on Friday.'), { q: 'donewhen', size: 1 }, ag({ q: 'mr', size: 2 }, 'The agent opened it: MR !41 answers round 2, ask 1.'), { q: 'since', shape: 'feed', size: 1 }],
     }[id] || [{ q: 'donewhen', size: 1 }, { q: 'since', shape: 'feed', size: 2 }];
-    return L([{ q: 'left', shape: 'groups', size: 2 }, { q: 'chat', size: 1 }].concat(extra));
+    return L([{ q: 'left', shape: 'groups', size: 2 }, { q: 'chat', shape: 'conversation', size: 1 }].concat(extra));
   }
+  function cfg(sp) { return S.spaceCfg[sp] || (S.spaceCfg[sp] = { cols: 3, tiling: 'flow' }); }
   function layoutFor(sp) { if (!S.layouts[sp]) S.layouts[sp] = template(sp); return S.layouts[sp]; }
   function findW(id) {
     for (const sp in S.layouts) { const i = S.layouts[sp].findIndex((w) => w.id === id); if (i >= 0) return { sp, arr: S.layouts[sp], i, wd: S.layouts[sp][i] }; }
@@ -168,7 +170,7 @@
   function snapshot(sp) { S.undo = { sp, layout: JSON.parse(JSON.stringify(layoutFor(sp))) }; }
 
   // ---------- the agent arranges with the same parts ----------
-  function say(sp, who, html) { (ui.chat[sp] = ui.chat[sp] || []).push({ who, html }); }
+  function say(sp, who, html) { (S.chat[sp] = S.chat[sp] || []).push({ who, html, when: clockShort() }); }
   function shortLeft(id, sp) {
     const w = W(id); const ts = wiTasks(id).filter((t) => t.status !== 'done');
     const metN = w.doneWhen.filter(met).length;
@@ -180,28 +182,39 @@
       ${line('After', ts.filter((t) => t.status === 'blocked'), (t) => esc(t.title))}
       ${sp.startsWith('wi:') ? '' : `<div class="chips"><button class="pill" data-act="open-wi" data-id="${id}">Open the workspace</button><button class="pill" data-act="pin-left" data-id="${id}" data-a="${sp}">Pin this as a widget</button></div>`}`;
   }
+  const CLASSIC = [{ q: 'needs', shape: 'list', size: 2 }, { q: 'since', shape: 'feed', size: 1 }, { q: 'items', shape: 'cards', size: 2 }, { q: 'upnext', shape: 'wlist', size: 1 }, { q: 'todos', shape: 'todos', size: 1 }, { q: 'agents', shape: 'compact', size: 1 }, { q: 'waiting', shape: 'compact', size: 1 }];
+  function place(sp, wd) { const lay = layoutFor(sp); lay.splice(lay[0] && lay[0].q === 'chat' ? 1 : 0, 0, wd); return wd; }
+  const hasQ = (sp, q, scope) => layoutFor(sp).some((w) => w.q === q && (!scope || w.scope === scope));
   const ASKS = [
+    { key: 'needs', where: (sp) => !sp.startsWith('wi:'), label: () => 'What needs me?', run(sp) {
+      const l = needsList().filter(inT(ctxOf(sp))); const total = l.reduce((a, t) => a + (t.est || 0), 0);
+      say(sp, 'agent', `<strong>${l.length} things, about ${mins(total)}.</strong>${l.slice(0, 6).map((t) => `<div class="sl"><span class="sl-k">${esc(keyOf(t))}</span><span><button class="link" data-act="open-task" data-id="${t.id}">${esc(t.title)}</button></span></div>`).join('')}${hasQ(sp, 'needs') ? '' : `<div class="chips"><button class="pill" data-act="pin-q" data-id="needs" data-a="${sp}">Keep this on screen</button></div>`}`);
+    } },
     { key: 'plan', where: (sp) => sp === 'home', label: () => 'Plan my day', run(sp) {
-      if (layoutFor(sp).some((w) => w.q === 'today')) return say(sp, 'agent', 'Today is already on your home.');
+      if (hasQ(sp, 'today')) return say(sp, 'agent', 'Today is already on your home.');
       snapshot(sp); const l = planList();
-      layoutFor(sp).unshift(mkW({ q: 'today', shape: 'agenda', size: 2, by: 'agent', why: 'You asked: "Plan my day."' }));
-      say(sp, 'agent', `I put <strong>Today</strong> at the top: ${l.length} things, about ${mins(l.reduce((s, t) => s + (t.est || 0), 0))}. Security and the platform lead are waiting on you, so theirs come first. Reorder it or press Not today; pick any one to start.`);
-      toast('The agent added Today to your home', true);
+      place(sp, mkW({ q: 'today', shape: 'agenda', size: 2, by: 'agent', why: 'You asked: "Plan my day."' }));
+      say(sp, 'agent', `I put <strong>Today</strong> under this box: ${l.length} things, about ${mins(l.reduce((a, t) => a + (t.est || 0), 0))}. Security and the platform lead are waiting on you, so theirs come first. Reorder it or press Not today; pick any one to start.`);
+      toast('The agent added Today', true);
     } },
     { key: 'left', where: (sp) => sp === 'home' || sp === 'p:nexus', label: () => 'What\'s left to close NEX-12?', run(sp) { say(sp, 'agent', shortLeft('nex12', sp)); } },
+    { key: 'usual', where: (sp) => sp === 'home' && CLASSIC.some((o) => !hasQ(sp, o.q)), label: () => 'Set up my usual dashboard', run(sp) {
+      snapshot(sp); const add = CLASSIC.filter((o) => !hasQ(sp, o.q));
+      S.layouts[sp] = layoutFor(sp).concat(add.map((o) => mkW(Object.assign({}, o, { by: 'agent', why: 'You asked for your usual dashboard.' }))));
+      say(sp, 'agent', `Added ${add.length} widgets under what you already had: ${add.map((o) => Q[o.q].label).join(', ')}. Customize manually to move things around.`);
+      toast('The agent set up your dashboard', true);
+    } },
     { key: 'sec', where: (sp) => sp === 'home', label: () => 'Keep SEC-431\'s back-and-forth on my home', run(sp) {
-      if (layoutFor(sp).some((w) => w.q === 'thread' && w.scope === 'wi:sec431')) return say(sp, 'agent', 'It\'s already on your home.');
-      snapshot(sp); layoutFor(sp).push(mkW({ q: 'thread', scope: 'wi:sec431', size: 2, by: 'agent', why: 'You asked to keep SEC-431\'s back-and-forth on your home.' }));
-      say(sp, 'agent', 'Added the SEC-431 thread at the bottom of your home. It\'s the same widget as in the workspace, scoped to SEC-431.');
+      if (hasQ(sp, 'thread', 'wi:sec431')) return say(sp, 'agent', 'It\'s already on your home.');
+      snapshot(sp); place(sp, mkW({ q: 'thread', scope: 'wi:sec431', size: 2, by: 'agent', why: 'You asked to keep SEC-431\'s back-and-forth on your home.' }));
+      say(sp, 'agent', 'Added the SEC-431 thread under this box. It\'s the same widget as in the workspace, scoped to SEC-431.');
       toast('The agent added the SEC-431 thread', true);
     } },
-    { key: 'trim', where: (sp) => sp === 'home', label: () => 'Strip my home to the essentials', run(sp) {
-      snapshot(sp); const lay = layoutFor(sp);
-      const keep = lay.find((w) => w.q === 'needs') || mkW({ q: 'needs', shape: 'list', size: 2, by: 'agent' });
-      keep.size = 2;
-      S.layouts[sp] = [keep, mkW({ q: 'items', shape: 'wlist', size: 1, by: 'agent', why: 'You asked for the essentials: what needs you, and your work items in one line each.' })];
-      say(sp, 'agent', 'Your home is down to two widgets: Needs you and your work items. Everything else is still in the Tasks app, or one ask away.');
-      toast('The agent simplified your home', true);
+    { key: 'trim', where: (sp) => sp === 'home' && layoutFor(sp).length > 2, label: () => 'Clear my home back to this box', run(sp) {
+      snapshot(sp); const chat = layoutFor(sp).find((w) => w.q === 'chat') || mkW({ q: 'chat', shape: 'minimal', size: 3, by: 'agent' });
+      S.layouts[sp] = [chat];
+      say(sp, 'agent', 'Your home is back to just this box. Everything else is in the Tasks app, or one ask away.');
+      toast('The agent cleared your home', true);
     } },
     { key: 'wsleft', where: (sp) => sp.startsWith('wi:'), label: () => 'What\'s left?', run(sp) { say(sp, 'agent', shortLeft(sp.slice(3), sp)); } },
     { key: 'wsboard', where: (sp) => sp.startsWith('wi:'), label: () => 'Show the tasks as a board', run(sp) {
@@ -216,7 +229,7 @@
   // ---------- actions ----------
   const act = {
     // navigation
-    go: (sp) => { ui.space = sp; ui.page = null; ui.drawer = null; ui.after = null; ui.pop = null; ui.edit = false; try { window.scrollTo(0, 0); } catch (e) { /* no scroll */ } },
+    go: (sp) => { ui.focusTask = null; ui.chats = null; ui.space = sp; ui.page = null; ui.drawer = null; ui.after = null; ui.pop = null; ui.edit = false; try { window.scrollTo(0, 0); } catch (e) { /* no scroll */ } },
     'open-wi': (id) => { if (!S.items.find((w) => w.id === id)) return act['start-wi'](id); act.go('wi:' + id); },
     'open-ws': (id) => act['open-wi'](id),
     'open-app': (v) => { ui.page = { kind: 'app', view: v || 'needs' }; ui.drawer = null; ui.after = null; ui.pop = null; ui.edit = false; },
@@ -226,7 +239,7 @@
     pop: (which) => { ui.pop = ui.pop === which ? null : which; ui.menu = null; },
     sim: () => { ui.pop = ui.pop === 'sim' ? null : 'sim'; },
     // task panel
-    'open-task': (id, from) => { ui.drawer = id; ui.after = null; ui.confirm = null; ui.from = from && RENDERED[from] ? RENDERED[from] : null; },
+    'open-task': (id, from) => { ui.chats = null; ui.drawer = id; ui.after = null; ui.confirm = null; ui.from = from && RENDERED[from] ? RENDERED[from] : null; },
     'close-drawer': () => { ui.drawer = null; ui.after = null; ui.confirm = null; },
     approve: (id) => {
       const t = T(id);
@@ -336,7 +349,12 @@
     'w-remove': (id) => { const f = findW(id); if (!f) return; snapshot(f.sp); f.arr.splice(f.i, 1); ui.menu = null; ui.modal = null; toast('Removed from this space. Its data is untouched.', true); },
     'w-left': (id) => { const f = findW(id); if (f && f.i > 0) { f.arr.splice(f.i, 1); f.arr.splice(f.i - 1, 0, f.wd); } },
     'w-right': (id) => { const f = findW(id); if (f && f.i < f.arr.length - 1) { f.arr.splice(f.i, 1); f.arr.splice(f.i + 1, 0, f.wd); } },
-    'w-size': (id) => { const f = findW(id); if (f) f.wd.size = f.wd.size % 3 + 1; },
+    'w-wider': (id) => { const f = findW(id); if (f) f.wd.size = Math.min(cfg(f.sp).cols, (f.wd.size || 1) + 1); },
+    'w-narrower': (id) => { const f = findW(id); if (f) f.wd.size = Math.max(1, Math.min(cfg(f.sp).cols, f.wd.size || 1) - 1); },
+    'w-taller': (id) => { const f = findW(id); if (f) f.wd.h = f.wd.h === 'auto' || !f.wd.h ? 1 : Math.min(4, f.wd.h + 1); },
+    'w-shorter': (id) => { const f = findW(id); if (f) f.wd.h = !f.wd.h || f.wd.h === 'auto' || f.wd.h <= 1 ? 'auto' : f.wd.h - 1; },
+    'cfg-cols': (n) => { cfg(ui.space).cols = +n; },
+    'cfg-tiling': (m) => { cfg(ui.space).tiling = m; },
     'w-pin': (id) => {
       const r = RENDERED[id]; const sc = scopeOf(r.wd, r.ctx); ui.menu = null;
       layoutFor('home').push(mkW({ q: r.wd.q, shape: r.wd.shape, size: r.wd.size === 3 ? 2 : r.wd.size, scope: sc === 'all' ? 'inherit' : sc, by: 'you' }));
@@ -346,14 +364,14 @@
     'reset-layout': () => { snapshot(ui.space); S.layouts[ui.space] = template(ui.space); toast('This space is back to its default layout', true); },
     'add-widget': () => { const ctx = ctxOf(ui.space); ui.modal = { kind: 'add', sp: ui.space, pick: null, shape: null, scope: 'inherit', ctx }; },
     'add-pick': (key) => {
-      const m = ui.modal; m.pick = key; m.shape = Q[key] ? Q[key].shapes[0] : null;
-      if (X[key]) m.scope = m.ctx.startsWith('wi:') ? 'inherit' : 'wi:' + (S.items.find((w) => w.inProgress) || S.items[0]).id;
+      const m = ui.modal; m.pick = key; m.shape = (Q[key] || X[key]).shapes ? (Q[key] || X[key]).shapes[0] : null;
+      if (X[key] && !X[key].any) m.scope = m.ctx.startsWith('wi:') ? 'inherit' : 'wi:' + (S.items.find((w) => w.inProgress) || S.items[0]).id;
       else if (m.scope !== 'inherit' && !m.scope.startsWith('p:') && m.scope !== 'all' && !m.ctx.startsWith('wi:')) m.scope = 'inherit';
     },
     'add-confirm': () => { const m = ui.modal; if (!m.pick) return; layoutFor(m.sp).push(mkW({ q: m.pick, shape: m.shape, scope: m.scope, size: m.pick === 'thread' || m.pick === 'doc' || m.shape === 'board' ? 2 : 1, by: 'you' })); ui.modal = null; toast('Added. ⋯ on it changes its shape, or removes it.'); },
     ask: (key, sp) => { const a = ASKS.find((x) => x.key === key); sp = sp || ui.space; say(sp, 'you', esc(a.label(sp))); a.run(sp); },
-    'ask-text': (sp) => {
-      const el = document.getElementById(askId(sp)); const text = el && el.value.trim(); if (!text) return;
+    'ask-text': (sp, form) => {
+      const el = form ? form.querySelector('input') : document.getElementById(askId(sp)); const text = el && el.value.trim(); if (!text) return;
       say(sp, 'you', esc(text)); el.value = '';
       const hit = ASKS.find((a) => a.where(sp) && a.label(sp).toLowerCase().split(/\W+/).filter((x) => x.length > 3).some((w) => text.toLowerCase().includes(w)));
       if (hit) hit.run(sp); else say(sp, 'agent', 'In this mock I only know the suggestions. In Nexus I\'d answer here and arrange the space with the same widgets you can.');
@@ -361,7 +379,14 @@
     'pin-left': (id, sp) => { snapshot(sp); layoutFor(sp).push(mkW({ q: 'left', scope: 'wi:' + id, shape: 'groups', size: 1, by: 'agent', why: `Pinned from "What's left to close ${W(id).key}?"` })); toast(`Pinned What's left (${W(id).key})`, true); },
     undo: () => { if (!S.undo) return; S.layouts[S.undo.sp] = S.undo.layout; S.undo = null; S.toasts = S.toasts.filter((x) => !x.undo); toast('Undone'); },
     'app-scope': () => {},
-    reset: () => { S = fresh(); ui.space = 'home'; ui.page = null; ui.drawer = null; ui.after = null; ui.modal = null; ui.confirm = null; ui.chat = {}; ui.edit = false; ui.pop = null; toast('Reset to Monday 08:30'); },
+    'pin-q': (q, sp) => { if (hasQ(sp, q)) return; snapshot(sp); place(sp, mkW({ q, shape: Q[q].shapes[0], size: 2, by: 'agent', why: 'You asked to keep it on screen.' })); toast(`Added ${Q[q].label}`, true); },
+    'open-in-ws': (id) => { const t = T(id); act.go('wi:' + t.wi); ui.focusTask = id; ui.from = null; },
+    unfocus: () => { ui.focusTask = null; },
+    chats: (id) => { ui.drawer = null; ui.after = null; ui.chats = id === 'list' ? { thread: null } : ui.chats ? null : { thread: null }; },
+    'chats-thread': (tk) => { ui.drawer = null; ui.after = null; ui.chats = { thread: tk }; },
+    'chats-close': () => { ui.chats = null; },
+    'pin-chat': (tk) => { const sp = ui.space; place(sp, mkW({ q: 'chat', scope: tk === 'home' ? 'all' : tk, shape: 'conversation', size: 1, by: 'you' })); ui.chats = null; toast(`Put the conversation on ${spaceName(sp)}`); },
+    reset: () => { S = fresh(); ui.space = 'home'; ui.page = null; ui.drawer = null; ui.after = null; ui.modal = null; ui.confirm = null; ui.edit = false; ui.pop = null; toast('Reset to Monday 08:30'); },
     run: (name) => { SIMS[name].run(); ui.pop = null; },
   };
   const askId = (sp) => 'ask-in-' + sp.replace(/[^a-z0-9]/gi, '-');
@@ -558,20 +583,50 @@
       </article>
       <div class="doc-comment"><label for="note-j5"><strong>Comment</strong> <span class="muted small">The agent picks it up as a task</span></label><textarea id="note-j5" rows="2" placeholder="e.g. Check what the 4 multi-step jobs would look like"></textarea><button class="btn small" data-act="comment" data-id="j5">Comment</button></div>`;
     },
-    chat: (sc) => {
-      const w = needWi(sc); if (!w || !w.ws) return empty('No agent session for this work item.');
-      const sp = 'wi:' + w.id; const susp = w.ws.state === 'suspended'; const away = w.ws.whileAway || [];
-      return `<div class="chat">
-        <div class="small muted">Session ${esc(w.ws.state === 'running' ? 'running' : w.ws.state === 'resumed' ? 'open' : w.ws.state === 'closed' ? 'closed' : 'suspended ' + w.ws.since)} · branch <code>${esc(w.ws.branch)}</code> · agent's environment</div>
-        ${susp ? `<div class="msg sys">Suspended. The branch, notes and transcript are kept. <button class="link" data-act="resume-ws" data-id="${w.id}">Resume where it stopped</button></div>` : ''}
-        ${away.length ? `<div class="msg agent"><strong>${susp ? 'Before I stopped:' : 'While you were away:'}</strong><ul>${away.map((a) => `<li>${esc(a)}</li>`).join('')}</ul></div>` : ''}
-        ${!susp && w.ws.state !== 'closed' ? `<div class="msg agent">Anything you want to take over? Everything I've done is on <code>${esc(w.ws.branch)}</code> and in the task notes.</div>` : ''}
-        ${(ui.chat[sp] || []).map((m) => `<div class="msg ${m.who}">${m.html}</div>`).join('')}
-        <div class="chips">${ASKS.filter((a) => a.where(sp)).map((a) => `<button class="pill" data-act="ask" data-id="${a.key}" data-a="${sp}">${esc(a.label(sp))}</button>`).join('')}</div>
-        <form class="askform" data-form="ask-text" data-id="${sp}"><label class="sr" for="${askId(sp)}">Message the agent</label><input id="${askId(sp)}" placeholder="Message the agent" autocomplete="off"><button class="btn small" type="submit">Send</button></form>
-      </div>`;
-    },
+    chat: (sc, wd) => chatBody(sc === 'all' ? 'home' : sc, wd.shape || 'conversation', {}),
   };
+  const threadTitle = (tk) => (tk === 'home' ? 'Home agent' : tk.startsWith('p:') ? `${P(tk.slice(2)).name} · project agent` : `${W(tk.slice(3)).key} · session`);
+  const strip = (h) => h.replace(/<[^>]+>/g, '');
+  function chatBody(tk, shape, o) {
+    const w = tk.startsWith('wi:') ? W(tk.slice(3)) : null;
+    const msgs = S.chat[tk] || [];
+    const chips = ASKS.filter((a) => a.where(tk));
+    const inputId = askId(tk) + (o.panel ? '-p' : '');
+    const homeish = !w;
+    const form = `<form class="askform" data-form="ask-text" data-id="${tk}"><label class="sr" for="${inputId}">${homeish ? 'Ask Nexus' : 'Message the agent'}</label><input id="${inputId}" placeholder="${homeish ? 'Ask Nexus anything, or tell it how to set up this screen' : 'Message the agent'}" autocomplete="off"><button class="btn${shape === 'minimal' ? ' primary' : ' small'}" type="submit">${homeish ? 'Ask' : 'Send'}</button></form>`;
+    const chipRow = chips.length ? `<div class="chips">${chips.map((a) => `<button class="pill" data-act="ask" data-id="${a.key}" data-a="${tk}">${esc(a.label(tk))}</button>`).join('')}</div>` : '';
+    const bubble = (m) => `<div class="msg ${m.who}">${m.when ? `<span class="mwhen">${esc(m.when)}</span>` : ''}<div>${m.html}</div></div>`;
+    const status = w && w.ws ? `<div class="small muted">Session ${esc(w.ws.state === 'running' ? 'running' : w.ws.state === 'resumed' ? 'open' : w.ws.state === 'closed' ? 'closed' : 'suspended ' + w.ws.since)} · branch <code>${esc(w.ws.branch)}</code> · agent's environment</div>` : '';
+    if (shape === 'minimal') {
+      const last = msgs.slice(-2);
+      return `<div class="chat chat-min">${status}${form}${chipRow}${last.map(bubble).join('')}${msgs.length > 2 ? `<button class="link small" data-act="chats-thread" data-id="${tk}">Conversation history (${msgs.length})</button>` : ''}</div>`;
+    }
+    let session = status;
+    if (w && w.ws) {
+      const susp = w.ws.state === 'suspended'; const away = w.ws.whileAway || [];
+      session += `${susp ? `<div class="msg sys">Suspended. The branch, notes and transcript are kept. <button class="link" data-act="resume-ws" data-id="${w.id}">Resume where it stopped</button></div>` : ''}
+        ${away.length ? `<div class="msg agent"><strong>${susp ? 'Before I stopped:' : 'While you were away:'}</strong><ul>${away.map((a) => `<li>${esc(a)}</li>`).join('')}</ul></div>` : ''}
+        ${!susp && w.ws.state !== 'closed' ? `<div class="msg agent">Anything you want to take over? Everything I've done is on <code>${esc(w.ws.branch)}</code> and in the task notes.</div>` : ''}`;
+    }
+    return `<div class="chat chat-conv"><div class="msgs">${msgs.map(bubble).join('')}${session}</div>${chipRow}${form}</div>`;
+  }
+  function chatsPanel() {
+    const c = ui.chats;
+    if (c.thread) {
+      const tk = c.thread; const here = ui.page ? null : ui.space;
+      const onScreen = here && layoutFor(here).some((wd) => wd.q === 'chat' && scopeOf(wd, ctxOf(here)) === (tk === 'home' ? 'all' : tk));
+      return `<div class="tp"><header class="tp-h"><button class="icon close" aria-label="Close" data-act="chats-close">×</button><div><button class="link small" data-act="chats" data-id="list">← All conversations</button></div><h2>${esc(threadTitle(tk))}</h2></header>
+        ${chatBody(tk, 'conversation', { panel: true })}
+        <div class="tp-foot small muted">${onScreen ? 'This conversation is also on this screen as a widget.' : here ? `<button class="link" data-act="pin-chat" data-id="${tk}">Put this conversation on ${esc(spaceName(here))}</button>` : ''}${tk.startsWith('wi:') ? ` · <button class="link" data-act="open-wi" data-id="${tk.slice(3)}">Open the workspace</button>` : ''}</div></div>`;
+    }
+    const threads = ['home'].concat(S.projects.map((p) => 'p:' + p.id).filter((k) => (S.chat[k] || []).length), S.items.filter((w) => w.ws).map((w) => 'wi:' + w.id));
+    return `<div class="tp"><header class="tp-h"><button class="icon close" aria-label="Close" data-act="chats-close">×</button><h2>Conversations</h2><p class="muted small">Every agent conversation is kept here, whether or not it's on a screen.</p></header>
+      <div class="threads">${threads.map((tk) => {
+        const ms = S.chat[tk] || []; const last = ms[ms.length - 1]; const w = tk.startsWith('wi:') ? W(tk.slice(3)) : null;
+        const preview = last ? strip(last.html) : w && w.ws.whileAway && w.ws.whileAway[0] ? w.ws.whileAway[0] : 'No messages yet';
+        return `<button class="threadrow" data-act="chats-thread" data-id="${tk}"><span class="tr-h"><strong>${esc(threadTitle(tk))}</strong><span class="muted small">${last ? esc(last.when || '') : w ? esc(w.ws.state) : ''}</span></span><span class="muted small">${esc(preview.slice(0, 96))}</span></button>`;
+      }).join('')}</div></div>`;
+  }
 
   // ---------- a widget: frame + body ----------
   function widget(wd, ctx, opts = {}) {
@@ -582,16 +637,18 @@
     else body = XR[wd.q](sc, wd);
     const scChip = sc !== ctx && sc !== 'all' ? `<span class="scope">${esc(scopeName(sc))}</span>` : '';
     const tools = ui.edit && !opts.full && !opts.app
-      ? `<span class="etools"><button class="icon" aria-label="Move earlier" data-act="w-left" data-id="${wd.id}">←</button><button class="icon" aria-label="Move later" data-act="w-right" data-id="${wd.id}">→</button><button class="icon wide" aria-label="Change width" data-act="w-size" data-id="${wd.id}">${wd.size}/3</button><button class="icon" aria-label="Remove" data-act="w-remove" data-id="${wd.id}">×</button></span>`
+      ? `<span class="etools"><button class="icon" aria-label="Move earlier" data-act="w-left" data-id="${wd.id}">←</button><button class="icon" aria-label="Move later" data-act="w-right" data-id="${wd.id}">→</button><span class="dim"><button class="icon" aria-label="Narrower" data-act="w-narrower" data-id="${wd.id}">−</button><span>w${Math.min(wd.size || 1, opts.cols || 3)}</span><button class="icon" aria-label="Wider" data-act="w-wider" data-id="${wd.id}">+</button></span><span class="dim"><button class="icon" aria-label="Shorter" data-act="w-shorter" data-id="${wd.id}">−</button><span>h${wd.h && wd.h !== 'auto' ? wd.h : '·'}</span><button class="icon" aria-label="Taller" data-act="w-taller" data-id="${wd.id}">+</button></span><button class="icon" aria-label="Remove" data-act="w-remove" data-id="${wd.id}">×</button></span>`
       : `<button class="icon" aria-label="About this widget" aria-expanded="${ui.menu === wd.id}" data-act="w-menu" data-id="${wd.id}">⋯</button>`;
-    return `<section class="widget s${wd.size}${wd.by === 'agent' ? ' by-agent' : ''}" data-w="${wd.id}">
+    const span = Math.min(wd.size || 1, opts.cols || 3); const h = wd.h && wd.h !== 'auto' ? +wd.h : 0;
+    const style = `grid-column: span ${span};${h ? (opts.tile ? ` grid-row: span ${h};` : ` height: ${h * 220}px;`) : ''}`;
+    return `<section class="widget${wd.by === 'agent' ? ' by-agent' : ''}${h || opts.tile ? ' fixed-h' : ''}${wd.q === 'chat' && wd.shape === 'minimal' ? ' w-prompt' : ''}" style="${style}" data-w="${wd.id}">
       <header class="wh"><h3>${esc(def.label)}${count !== '' ? ` <span class="count">${count}</span>` : ''}</h3>${scChip}${wd.by === 'agent' ? `<button class="badge" data-act="w-why" data-id="${wd.id}" title="Why is this here?">agent</button>` : ''}<span class="wh-r">${tools}</span>
         ${ui.menu === wd.id ? menu(wd, def, opts) : ''}</header>
       <div class="wb">${body}</div>
     </section>`;
   }
   function menu(wd, def, opts) {
-    const shapes = Q[wd.q] ? Q[wd.q].shapes : [];
+    const shapes = (Q[wd.q] || X[wd.q]).shapes || [];
     return `<div class="wmenu" role="menu">
       ${opts.full ? '' : `<button class="mi" data-act="w-full" data-id="${wd.id}">Open full view</button>`}
       ${shapes.length > 1 ? `<div class="mi-h">Show as</div><div class="seg">${shapes.map((s) => `<button class="${wd.shape === s ? 'on' : ''}" data-act="w-shape" data-id="${wd.id}" data-a="${s}">${SHAPE_NAME[s]}</button>`).join('')}</div>` : ''}
@@ -604,41 +661,41 @@
   // ---------- spaces ----------
   function homeHead() {
     const n = needsList().length; const ag = S.tasks.filter(agentWorking).length; const wt = S.tasks.filter(waitingOthers).length;
-    return `<div class="space-h"><div class="grow"><h2>Good morning</h2><p class="muted">${esc(S.clock)} · <strong class="fg">${n} things need you</strong> · ${ag} agents working · waiting on ${wt}</p></div>${editBtns()}</div>`;
+    return `<div class="space-h"><div class="grow"><h2>Good morning</h2><p class="muted">${esc(S.clock)} · <strong class="fg">${n} things need you</strong> · ${ag} agents working · waiting on ${wt}</p></div></div>`;
   }
   function projHead(sp) {
     const p = P(sp.slice(2)); const n = needsList().filter(inT(sp)).length;
     return `<div class="crumbs"><button class="link" data-act="go" data-id="home">Home</button> ›</div>
-      <div class="space-h"><div class="grow"><h2>${esc(p.name)}</h2><p class="muted">Project space: the same widgets as Home, narrowed to this project · ${n} need you</p></div>${editBtns()}</div>`;
+      <div class="space-h"><div class="grow"><h2>${esc(p.name)}</h2><p class="muted">Project space: the same widgets as Home, narrowed to this project · ${n} need you</p></div></div>`;
   }
   function wsHead(sp) {
     const w = W(sp.slice(3)); const m = move(w.id); const p = P(w.project);
     const sess = w.ws ? (w.ws.state === 'suspended' ? `<button class="btn small" data-act="resume-ws" data-id="${w.id}">Resume session</button>` : w.ws.state === 'closed' ? '' : `<button class="btn ghost small" data-act="suspend-ws" data-id="${w.id}">Suspend session</button>`) : '';
     return `<div class="crumbs"><button class="link" data-act="go" data-id="home">Home</button> › <button class="link" data-act="go" data-id="p:${esc(w.project)}">${esc(p.name)}</button> ›</div>
       <div class="space-h"><span class="key big" data-p="${esc(w.project)}">${esc(w.key)}</span><div class="grow"><h2>${esc(w.title)}</h2><p class="muted small">${esc(w.source)}: ${esc(w.sourceRef)} · Nexus reads it, ${esc(w.source)} owns it · the tasks below live only in your Nexus</p></div><span class="move ${m.kind}">${esc(m.label)}${m.n ? ' · ' + m.n : ''}</span></div>
-      <div class="ws-bar">${sess}${w.closed ? '' : w.inProgress ? `<button class="btn ghost small" data-act="park" data-id="${w.id}">Park</button>` : `<button class="btn small" data-act="unpark" data-id="${w.id}">Bring back</button>`}<span class="grow"></span>${editBtns()}</div>
+      <div class="ws-bar">${sess}${w.closed ? '' : w.inProgress ? `<button class="btn ghost small" data-act="park" data-id="${w.id}">Park</button>` : `<button class="btn small" data-act="unpark" data-id="${w.id}">Bring back</button>`}</div>
       ${!w.inProgress && !w.closed ? `<div class="banner park">Parked: ${esc(w.parkNote || '')}. Its tasks are out of your lists until then.</div>` : ''}
       ${w.closed ? `<div class="banner done">Closed in ${esc(w.source)}. The workspace is kept for reference.</div>` : ''}`;
   }
-  function editBtns() {
-    return ui.edit
-      ? `<span class="space-tools"><button class="btn ghost small" data-act="reset-layout">Reset to default</button><button class="btn primary small" data-act="edit">Done</button></span>`
-      : `<span class="space-tools"><button class="btn ghost small" data-act="edit">Customize</button></span>`;
-  }
-  function askBar(sp) {
-    const msgs = (ui.chat[sp] || []).slice(-2);
-    const chips = ASKS.filter((a) => a.where(sp));
-    return `<section class="ask">
-      ${msgs.map((m) => `<div class="msg ${m.who}">${m.html}</div>`).join('')}
-      <form class="askform" data-form="ask-text" data-id="${sp}"><label class="sr" for="${askId(sp)}">Ask Nexus</label><input id="${askId(sp)}" placeholder="Ask Nexus, or tell it how to arrange this space" autocomplete="off"><button class="btn" type="submit">Ask</button></form>
-      ${chips.length ? `<div class="chips"><span class="muted small">Try:</span>${chips.map((a) => `<button class="pill" data-act="ask" data-id="${a.key}" data-a="${sp}">${esc(a.label(sp))}</button>`).join('')}</div>` : ''}
-    </section>`;
+  function editBar(sp) {
+    const c = cfg(sp);
+    return `<div class="editbar" role="toolbar" aria-label="Customize this space">
+      <strong>Customizing ${esc(spaceName(sp))}</strong>
+      <span class="eb-g"><span class="muted small">Columns</span><span class="seg">${[1, 2, 3, 4].map((n) => `<button class="${c.cols === n ? 'on' : ''}" data-act="cfg-cols" data-id="${n}">${n}</button>`).join('')}</span></span>
+      <span class="eb-g"><span class="muted small">Tiling</span><span class="seg"><button class="${c.tiling === 'flow' ? 'on' : ''}" data-act="cfg-tiling" data-id="flow" title="Widgets take the height they need; the page scrolls">Flow</button><button class="${c.tiling === 'tile' ? 'on' : ''}" data-act="cfg-tiling" data-id="tile" title="Widgets fill the screen like a tiling window manager; each scrolls inside">Tile</button></span></span>
+      <span class="eb-g"><button class="btn small" data-act="add-widget">+ Add a widget</button><button class="btn ghost small" data-act="reset-layout">Reset to default</button><button class="btn primary small" data-act="edit">Done</button></span>
+    </div>`;
   }
   function spaceView(sp) {
-    const lay = layoutFor(sp); const ctx = ctxOf(sp);
+    const lay = layoutFor(sp); const ctx = ctxOf(sp); const c = cfg(sp); const tile = c.tiling === 'tile';
     const head = sp === 'home' ? homeHead() : sp.startsWith('p:') ? projHead(sp) : wsHead(sp);
-    return `${head}${sp.startsWith('wi:') ? '' : askBar(sp)}
-      <div class="grid${ui.edit ? ' editing' : ''}">${lay.map((wd) => widget(wd, ctx)).join('')}${ui.edit ? '<button class="addtile" data-act="add-widget">+ Add a widget</button>' : ''}</div>`;
+    const solo = !ui.edit && lay.length === 1 && lay[0].q === 'chat' && lay[0].shape === 'minimal';
+    const ft = ui.focusTask && T(ui.focusTask);
+    const docked = ft && sp === 'wi:' + ft.wi ? `<section class="docked" aria-label="Task you're digging into">${panel(ft, { docked: true })}</section>` : '';
+    const grid = `<div class="grid${ui.edit ? ' editing' : ''}${tile && !solo ? ' tile' : ''}" style="--cols:${solo ? 1 : c.cols}">${lay.map((wd) => widget(wd, ctx, { cols: solo ? 1 : c.cols, tile: tile && !solo })).join('')}${ui.edit ? '<button class="addtile" data-act="add-widget">+ Add a widget</button>' : ''}</div>`;
+    const emptyNote = !lay.length && !ui.edit ? `<p class="empty">This space is empty. Press <strong>Customize manually</strong>, or open <strong>Chats</strong> to talk to the agent.</p>` : '';
+    const corner = ui.edit ? '' : `<button class="corner btn" data-act="edit">Customize manually</button>`;
+    return `${ui.edit ? editBar(sp) : ''}${solo ? `<div class="solo">${head}${grid}</div>` : head + docked + grid}${emptyNote}${corner}`;
   }
 
   // ---------- the Tasks app: default views, made of the same widgets ----------
@@ -660,17 +717,17 @@
         <div class="space-h"><div class="grow"><h2>Tasks · ${esc(v[1])}</h2><p class="muted small">The default views for tasks. You never have to come here: each one is also a widget you can put on any space (⋯ → Pin to Home).</p></div>
           <label class="small" for="app-scope">Show</label><select id="app-scope" data-change="app-scope"><option value="all"${ui.appScope === 'all' ? ' selected' : ''}>everything</option>${S.projects.map((p) => `<option value="p:${p.id}"${ui.appScope === 'p:' + p.id ? ' selected' : ''}>${esc(p.name)}</option>`).join('')}</select>
           <button class="btn ghost small" data-act="close-page">Close</button></div>
-        <div class="grid">${wds.map((wd) => widget(wd, ui.appScope, { app: true })).join('')}</div>
+        <div class="grid" style="--cols:1">${wds.map((wd) => widget(wd, ui.appScope, { app: true, cols: 1 })).join('')}</div>
       </div>
     </div>`;
   }
   function fullView() {
     const p = ui.page;
-    return `<div class="page"><div><button class="link" data-act="close-page">← Back</button></div><div class="grid">${widget(p.wd, p.ctx, { full: true })}</div></div>`;
+    return `<div class="page"><div><button class="link" data-act="close-page">← Back</button></div><div class="grid" style="--cols:1">${widget(p.wd, p.ctx, { full: true, cols: 1 })}</div></div>`;
   }
 
   // ---------- the task panel: one place to act, wherever the task was shown ----------
-  function panel(t) {
+  function panel(t, o = {}) {
     const w = t.wi && W(t.wi);
     const c = ui.confirm && ui.confirm.id === t.id ? ui.confirm.act : null;
     let body = ''; let actions = '';
@@ -745,16 +802,16 @@
       body = `<p>${esc(t.why || '')}</p>`;
       actions += `<button class="btn primary" data-act="mark-done" data-id="${t.id}">Done</button>`;
     }
-    const nxt = ui.from ? nextIn(ui.from, t.id)[0] : null;
+    const nxt = ui.from && !o.docked ? nextIn(ui.from, t.id)[0] : null;
     return `<div class="tp">
-      <header class="tp-h"><button class="icon close" aria-label="Close" data-act="close-drawer">×</button>
-        <div class="tp-meta">${keyChip(t)}${chip(t)}${t.est && t.status !== 'done' ? `<span class="est">${mins(t.est)}</span>` : ''}</div>
+      <header class="tp-h"><button class="icon close" aria-label="Close" data-act="${o.docked ? 'unfocus' : 'close-drawer'}">×</button>
+        <div class="tp-meta">${keyChip(t)}${chip(t)}${t.est && t.status !== 'done' ? `<span class="est">${mins(t.est)}</span>` : ''}${w && !o.docked ? `<button class="btn small dig" data-act="open-in-ws" data-id="${t.id}">Open in workspace ↗</button>` : ''}</div>
         <h2>${esc(t.title)}</h2>
         <div class="small muted">${t.status === 'review' && t.reviewer ? `${esc(t.assignee === 'agent' ? 'Done by the agent' : t.assignee)} · reviewer: ${esc(t.reviewer)}` : `Assigned to ${esc(t.assignee)}`}</div>
       </header>
       <div class="tp-body">${body}</div>
       <div class="tp-actions">${actions}</div>
-      <div class="tp-foot small muted">${w ? `<button class="link" data-act="open-wi" data-id="${w.id}">Open the ${esc(w.key)} workspace</button>${w.inProgress && !w.closed ? ` · <button class="link" data-act="park" data-id="${w.id}">Park ${esc(w.key)}</button>` : ''}` : 'A todo: no work item, no workspace.'}
+      <div class="tp-foot small muted">${o.docked ? 'Docked here while you dig in: the agent session, doc and tasks are around it. × puts it away; the task stays on the board.' : w ? `<button class="link" data-act="open-wi" data-id="${w.id}">Open the ${esc(w.key)} workspace</button>${w.inProgress && !w.closed ? ` · <button class="link" data-act="park" data-id="${w.id}">Park ${esc(w.key)}</button>` : ''}` : 'A todo: no work item, no workspace.'}
         ${nxt ? `<div class="nextin">Next in ${esc(label(ui.from.wd))}: <button class="link" data-act="open-task" data-id="${nxt.id}" data-from="${esc(ui.from.wd.id)}">${esc(nxt.title)} →</button></div>` : ''}</div>
     </div>`;
   }
@@ -801,7 +858,7 @@
     if (!r) return '';
     const wd = r.wd; const def = Q[wd.q] || X[wd.q]; const sc = scopeOf(wd, r.ctx);
     const by = wd.by === 'agent' ? `The agent, ${esc(wd.when || '')}. ${esc(wd.why || '')}` : wd.by === 'default' ? 'Part of the default layout for this space.' : wd.by === 'app' ? 'A default view of the Tasks app.' : `You, ${esc(wd.when || '')}.`;
-    const spec = { data: wd.q, scope: wd.scope === 'inherit' ? 'follows the space' : wd.scope, shape: wd.shape || '(app widget)', width: wd.size };
+    const spec = { data: wd.q, scope: wd.scope === 'inherit' ? 'follows the space' : wd.scope, shape: wd.shape || '(app widget)', width: wd.size, height: wd.h || 'auto' };
     return `<div class="modal-bg"><div class="modal" role="dialog" aria-label="What is this widget">
       <header class="tp-h"><button class="icon close" aria-label="Close" data-act="close-modal">×</button><h2>${esc(def.label)}</h2></header>
       <dl class="spec">
@@ -818,13 +875,13 @@
   function addModal() {
     const m = ui.modal;
     const scopes = [['inherit', `Follows this space (${scopeName(m.ctx)})`], ['all', 'Everything']].concat(S.projects.map((p) => ['p:' + p.id, p.name]), S.items.filter((w) => !w.closed).map((w) => ['wi:' + w.id, `${w.key} · ${w.title}`]));
-    const okScopes = m.pick && X[m.pick] ? scopes.filter(([k]) => k.startsWith('wi:') || (k === 'inherit' && m.ctx.startsWith('wi:'))) : scopes;
-    const preview = m.pick ? widget({ id: 'preview', q: m.pick, shape: m.shape, scope: m.scope, size: 3, by: 'you' }, m.ctx, { full: true, app: true }) : '';
+    const okScopes = m.pick && X[m.pick] && !X[m.pick].any ? scopes.filter(([k]) => k.startsWith('wi:') || (k === 'inherit' && m.ctx.startsWith('wi:'))) : scopes;
+    const preview = m.pick ? `<div class="grid" style="--cols:1">${widget({ id: 'preview', q: m.pick, shape: m.shape, scope: m.scope, size: 1, by: 'you' }, m.ctx, { full: true, app: true, cols: 1 })}</div>` : '';
     return `<div class="modal-bg"><div class="modal wide" role="dialog" aria-label="Add a widget">
       <header class="tp-h"><button class="icon close" aria-label="Close" data-act="close-modal">×</button><h2>Add a widget to ${esc(spaceName(m.sp))}</h2><p class="muted small">Pick what it shows, then how. Or ask the agent to do it for you.</p></header>
       <div class="catalog">${Object.keys(Q).concat(Object.keys(X)).map((k) => `<button class="cat${m.pick === k ? ' on' : ''}" data-act="add-pick" data-id="${k}"><strong>${esc((Q[k] || X[k]).label)}</strong><span class="muted small">${esc((Q[k] || X[k]).rule)}</span></button>`).join('')}</div>
       ${m.pick ? `<div class="addopts">
-        ${Q[m.pick] && Q[m.pick].shapes.length > 1 ? `<label class="small" for="add-shape">Shape</label><select id="add-shape" data-change="add-shape">${Q[m.pick].shapes.map((s) => `<option value="${s}"${m.shape === s ? ' selected' : ''}>${SHAPE_NAME[s]}</option>`).join('')}</select>` : ''}
+        ${(Q[m.pick] || X[m.pick]).shapes && (Q[m.pick] || X[m.pick]).shapes.length > 1 ? `<label class="small" for="add-shape">Shape</label><select id="add-shape" data-change="add-shape">${(Q[m.pick] || X[m.pick]).shapes.map((s) => `<option value="${s}"${m.shape === s ? ' selected' : ''}>${SHAPE_NAME[s]}</option>`).join('')}</select>` : ''}
         <label class="small" for="add-scope">Scope</label><select id="add-scope" data-change="add-scope">${okScopes.map(([k, l]) => `<option value="${esc(k)}"${m.scope === k ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select></div>
         <div class="previewbox"><span class="muted small">Preview</span>${preview}</div>` : ''}
       <div class="tp-actions"><button class="btn primary" data-act="add-confirm"${m.pick ? '' : ' disabled'}>Add</button><button class="btn ghost" data-act="close-modal">Cancel</button></div>
@@ -866,6 +923,7 @@
         <div class="top-r">
           <button class="needs" data-act="open-app" data-id="needs" title="Always here, whatever your layout">${n} need you</button>
           <span class="clock">${esc(S.clock)}</span>
+          <button class="btn small" data-act="chats" aria-expanded="${!!ui.chats}">Chats</button>
           <button class="btn small" data-act="pop" data-id="apps" aria-expanded="${ui.pop === 'apps'}">Apps</button>
           <button class="btn small" data-act="pop" data-id="sim" aria-expanded="${ui.pop === 'sim'}">Make something happen</button>
           <button class="btn ghost small" data-act="reset">Reset</button>
@@ -873,7 +931,7 @@
         ${ui.pop === 'spaces' ? spacesPop() : ui.pop === 'apps' ? appsPop() : ui.pop === 'sim' ? simPop() : ''}
       </header>
       <main class="main">${main}</main>
-      ${drawer ? `<div class="drawer-bg" data-act="close-drawer"></div><aside class="drawer" aria-label="Task">${drawer}</aside>` : ''}
+      ${drawer ? `<div class="drawer-bg" data-act="close-drawer"></div><aside class="drawer" aria-label="Task">${drawer}</aside>` : ui.chats ? `<div class="drawer-bg" data-act="chats-close"></div><aside class="drawer chats" aria-label="Conversations">${chatsPanel()}</aside>` : ''}
       ${modal}
       <div class="toasts" aria-live="polite">${S.toasts.map((x) => `<div class="toast">${esc(x.text)}${x.undo && S.undo ? ' <button class="link undo" data-act="undo">Undo</button>' : ''}</div>`).join('')}</div>`;
     if (focusEl) { const el = document.getElementById(focusEl); if (el && el.tagName !== 'BUTTON') { el.focus(); try { if (pos != null) el.setSelectionRange(pos, pos); } catch (e) { /* select */ } } }
@@ -895,7 +953,7 @@
     if (FINISH.has(a) && before && !ui.drawer && fromW && nextIn(fromW, before).length) ui.after = { from: fromW, done: before };
     render();
   });
-  document.addEventListener('submit', (e) => { const f = e.target.closest('[data-form]'); if (!f) return; e.preventDefault(); act[f.getAttribute('data-form')](f.getAttribute('data-id')); render(); });
+  document.addEventListener('submit', (e) => { const f = e.target.closest('[data-form]'); if (!f) return; e.preventDefault(); act[f.getAttribute('data-form')](f.getAttribute('data-id'), f); render(); });
   document.addEventListener('input', (e) => { const el = e.target; if (el.getAttribute('data-input') === 'draft') T(el.getAttribute('data-id')).draft = el.value; });
   document.addEventListener('change', (e) => {
     const k = e.target.getAttribute('data-change'); if (!k) return;
@@ -906,11 +964,25 @@
   });
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;
-    if (ui.modal) ui.modal = null; else if (ui.drawer || ui.after) { ui.drawer = null; ui.after = null; } else if (ui.pop || ui.menu) { ui.pop = null; ui.menu = null; } else if (ui.edit) ui.edit = false; else if (ui.page) ui.page = null; else return;
+    if (ui.modal) ui.modal = null; else if (ui.drawer || ui.after || ui.chats) { ui.drawer = null; ui.after = null; ui.chats = null; } else if (ui.pop || ui.menu) { ui.pop = null; ui.menu = null; } else if (ui.edit) ui.edit = false; else if (ui.page) ui.page = null; else return;
     render();
   });
 
-  function fresh() { const d = window.NexusMock.makeData(); d.layouts = {}; d.undo = null; return d; }
+  function fresh() { const d = window.NexusMock.makeData(); d.layouts = {}; d.undo = null; d.spaceCfg = {}; d.chat = seedChat(); return d; }
+  function seedChat() {
+    return {
+      home: [
+        { who: 'you', when: 'Fri 17:41', html: 'Remind me on Monday that conference hotel rates go up this week' },
+        { who: 'agent', when: 'Fri 17:41', html: 'Added a todo: <em>Book a hotel for the conference (Dec 2–4)</em>, due Tuesday. It will be in Needs you on Monday.' },
+        { who: 'you', when: 'Fri 17:58', html: 'Anything still waiting on me before the weekend?' },
+        { who: 'agent', when: 'Fri 17:58', html: 'Two reviews (MR !23 and MR !41) are ready, but nobody is blocked on them until Monday. IT-882 has been idle 4 days; I\'ll draft a nudge if it reaches 5.' },
+      ],
+      'wi:nex12': [
+        { who: 'you', when: 'Thu 16:20', html: 'Draft the design doc from our notes. Polling, not webhooks.' },
+        { who: 'agent', when: 'Thu 16:52', html: 'Design doc v1 is ready. I sent it to the platform lead for approval, as you asked.' },
+      ],
+    };
+  }
   S = fresh();
   render();
   window.NexusMock.debug = { get state() { return S; }, ui, needsList, act, render, SIMS, Q, layoutFor, findW };
