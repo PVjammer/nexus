@@ -115,13 +115,8 @@ func (a *App) homeContext(view string) string {
 	if waiting > 0 {
 		fmt.Fprintf(&b, "captures waiting to be filed: %d (capture_list, then capture_propose for each)\n", waiting)
 	}
-	if ws := a.Desk.Snapshot().Widgets; len(ws) > 0 {
-		var names []string
-		for _, w := range ws {
-			names = append(names, w.Plugin)
-		}
-		fmt.Fprintf(&b, "dashboard widgets: %s\n", strings.Join(names, ", "))
-	}
+	b.WriteString(a.describeHome())
+	b.WriteString("(the user's prompt box is the chat widget; change the home screen only when asked, with home_* tools)\n")
 	b.WriteString("</nexus-context>")
 	return b.String()
 }

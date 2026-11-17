@@ -3,9 +3,12 @@
 
 import { ago, app, connect, desk, h, modal, on, project, promptModal, request, send, setView, space, toast, token, view, type Detail, type Need } from "./core";
 import { allViews, getView, position, render } from "./layout";
-import { md, mountPlugin, pluginControls, statusLabel } from "./panes";
+import { md, statusLabel } from "./panes";
 import { ChatPanel, isBusy } from "./chat";
 import { ic, kindIc } from "./icons";
+import { drawHome as drawHomeGrid, initHome, registerKind, setRedraw, startEditing, stopEditing, toastAgentChange, type WidgetCtx } from "./home";
+import { agentName, openChats, toggleChats } from "./chats";
+import { appsButton, initApps } from "./apps";
 
 if (!token) {
   document.body.innerHTML = `<div style="padding:40px;font-family:system-ui">Missing token. Open the URL that <code>nexus-core</code> printed (it ends in <code>#token=…</code>), or run <code>make app</code>.</div>`;
@@ -18,19 +21,10 @@ const isFirstRun = () => !!desk && projects().length === 0;
 
 // ---------------- chats ----------------
 
-const homeChat = new ChatPanel("home-chat");
-$("home-chat-slot").append(homeChat.el);
 const projChat = new ChatPanel("project-chat");
 $("project-chat-slot").append(projChat.el);
 
 function bindChats() {
-  homeChat.bind("home", {
-    placeholder: isFirstRun() ? "Tell the home agent about your work, or say “find my projects”." : "Ask across your projects, or tell me what to file…",
-    empty: () => h("div", { class: "msg system chat-empty" }, isFirstRun()
-      ? "Hi. I'm the home agent. I can find your projects, read what's in them, and set up this dashboard. Nothing here writes to your folders.\n\nSay “find my projects” to start."
-      : "I keep the overview: filing your captures, finding things across projects, and the dashboard. To work inside a project, open it; it has its own agent."),
-    context: () => ({ view: view.kind === "project" ? view.id : "" }),
-  });
   const p = project();
   if (p) {
     projChat.bind("p:" + p.id, {
@@ -69,8 +63,9 @@ function needsCount(pid?: string) {
 
 function drawTop() {
   const nav = $("tabs");
-  const home = h("button", { class: view.kind === "home" ? "active" : "", onclick: () => go({ kind: "home" }) }, ic("home"), " Home",
-    needsCount() ? h("span", { class: "count" }, String(needsCount())) : "");
+  const home = h("button", { class: view.kind === "home" ? "active" : "", onclick: () => go({ kind: "home" }) }, ic("home"), " Home");
+  const n = needsCount();
+  $("needs-pill").replaceChildren(...(n ? [h("button", { class: "needs-pill", title: "Always here, whatever is on your home screen", onclick: toggleNeeds }, h("span", { class: "count" }, String(n)), " need you")] : []));
   nav.replaceChildren(home, ...projects().map((p) => h("button", {
     class: view.kind === "project" && view.id === p.id ? "active" : "", title: p.path,
     onclick: () => go({ kind: "project", id: p.id }),
@@ -93,6 +88,7 @@ function drawTop() {
 }
 
 function go(v: { kind: "home" } | { kind: "project"; id: string }) {
+  if (v.kind !== "home") stopEditing();
   setView(v);
   draw();
 }
@@ -140,58 +136,8 @@ function whenNotEditing(el: HTMLElement, f: () => void): boolean {
   return true;
 }
 
-const capEl = captureBox();
-$("capture-slot").append(capEl);
-
-function drawHome() {
-  const body = $("dash-body");
-  document.body.classList.toggle("first-run", isFirstRun());
-  $("dash-head").hidden = !desk || isFirstRun();
-  drawWidgets();
-  if (!desk) { body.replaceChildren(h("div", { class: "muted pad" }, "Connecting…")); return; }
-  if (isFirstRun()) {
-    body.replaceChildren(h("div", { class: "hero" },
-      h("h1", {}, "Let's set up your desk."),
-      h("p", {}, "Nexus is where you plan and do project work with agents. Start by telling the home agent what you work on. It can scan your workspace for projects (foreman ledgers and git repos), read them, and build this dashboard with you."),
-      h("p", { class: "muted" }, "Nexus only reads your project folders. Its own state lives in its data directory."),
-      h("div", { class: "row" },
-        h("button", { class: "primary", onclick: () => send({ t: "chat", agent: "home", text: "Find my projects and help me set up." }) }, ic("spark"), " Find my projects"),
-        h("button", { onclick: addFolder }, ic("plus"), " Add a folder myself"))));
-    return;
-  }
-  if (whenNotEditing(body, drawHome)) return;
-  const needs = desk.needs || [];
-  const running = desk.running || [];
-  const caps = (desk.desk.captures || []).filter((c) => c.status === "new" || c.status === "proposed");
-  $("dash-date").textContent = new Date().toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" });
-  $("dash-summary").textContent = `${projects().length} projects · ${needsCount()} need you · ${running.length} running`;
-  body.replaceChildren(
-    h("div", { class: "dash-grid" },
-      section("Needs you", "inbox", needsList(needs), "needs"),
-      section("Running", "bolt", running.length ? running.map((r) => h("div", { class: "card run" },
-        h("div", { class: "card-top" }, h("span", { class: "busy-dot" }), h("b", {}, r.title), h("span", { class: "tag" }, project(r.project)?.name || r.project || ""), h("span", { class: "muted small grow-r" }, r.source === "foreman" ? "foreman" : "task agent")),
-        r.detail ? h("div", { class: "muted small" }, r.detail) : "",
-        r.task ? h("div", { class: "row" }, h("button", { onclick: () => openIn(r.project!, "task", { task: r.task }) }, "Follow along")) : ""))
-        : [h("div", { class: "empty-note" }, "No agents working right now.")], "running"),
-      caps.length ? section("Inbox", "note", caps.map(captureCard), "inbox") : null,
-      section("Projects", "folder", [h("div", { class: "proj-grid" }, ...projects().map(projectCard),
-        h("button", { class: "card add-card", onclick: addFolder }, ic("plus"), " Add a project"))], "projects"),
-    ));
-}
-
-function drawWidgets() {
-  const box = $("dash-widgets");
-  const ws = (!desk || isFirstRun()) ? [] : desk.desk.widgets || [];
-  box.hidden = ws.length === 0;
-  for (const [id, m] of widgetMounts) if (!ws.find((w) => w.id === id)) { m.mount.destroy(); m.el.remove(); widgetMounts.delete(id); }
-  if (!box.querySelector("h3")) box.append(h("h3", {}, ic("plugin"), " Widgets"), h("div", { class: "widget-grid" }));
-  const grid = box.querySelector(".widget-grid")!;
-  for (const w of ws) { const el = widgetCard(w); if (el.parentElement !== grid) grid.append(el); }
-}
-
-function section(title: string, icon: string, kids: (HTMLElement | null)[], cls: string): HTMLElement {
-  return h("section", { class: `dsec ${cls}` }, h("h3", {}, ic(icon), ` ${title}`), ...(kids.filter(Boolean) as HTMLElement[]));
-}
+// The home screen is a grid of widgets (home.ts). Here: what each data kind
+// draws, and the hooks home.ts needs.
 
 // Stale-workstream nudges are housekeeping, not decisions: they fold into one
 // line so the things that actually need you stay on top.
@@ -220,7 +166,7 @@ function needCard(n: Need): HTMLElement {
   const p = n.project ? project(n.project) : undefined;
   const acts: HTMLElement[] = [];
   if (n.source === "filing") {
-    acts.push(h("button", { class: "primary", onclick: () => document.querySelector(".dsec.inbox")?.scrollIntoView({ behavior: "smooth" }) }, `Review ${n.count} filing${n.count === 1 ? "" : "s"}`));
+    acts.push(h("button", { class: "primary", onclick: () => document.querySelector(".hw.k-inbox")?.scrollIntoView({ behavior: "smooth" }) }, `Review ${n.count} filing${n.count === 1 ? "" : "s"}`));
   }
   if (n.source === "foreman" && p) {
     if (n.report) acts.push(h("button", { class: "primary", onclick: () => openIn(p.id, "review", { path: n.report }) }, ic("doc"), " Open report"));
@@ -286,20 +232,125 @@ function projectCard(p: Detail): HTMLElement {
       !p.exists ? h("span", { class: "stat need" }, "folder missing") : null));
 }
 
-const widgetMounts = new Map<string, { el: HTMLElement; mount: ReturnType<typeof mountPlugin>; hash: string }>();
-function widgetCard(w: { id: string; plugin: string; wide?: boolean }): HTMLElement {
-  const pl = app?.plugins.find((x) => x.id === w.plugin);
-  let m = widgetMounts.get(w.id);
-  if (!m) {
-    const holder = h("div", { class: "widget-frame" });
-    const el = h("div", { class: `card widget${w.wide ? " wide" : ""}` }, h("div", { class: "widget-head" }), holder);
-    m = { el, mount: mountPlugin(holder, "widget:" + w.id, w.plugin), hash: pl?.hash || "" };
-    widgetMounts.set(w.id, m);
-  } else if (pl && pl.hash !== m.hash) { m.hash = pl.hash; m.mount.load(); }
-  m.el.className = `card widget${w.wide ? " wide" : ""}`;
-  m.el.querySelector(".widget-head")!.replaceChildren(h("b", {}, pl?.name || w.plugin), h("span", { class: "grow-r" }), ...pluginControls(w.plugin),
-    h("button", { title: "Remove from the dashboard", onclick: () => send({ t: "widgetRemove", widget: w.id }) }, "✕"));
-  return m.el;
+
+const inScope = (c: WidgetCtx) => (x: { project?: string }) => !c.project || x.project === c.project;
+const empty = (t: string) => h("div", { class: "empty-note" }, t);
+const tag = (pid?: string) => pid ? h("span", { class: "tag" }, project(pid)?.name || pid) : "";
+
+function needOpen(n: Need): (() => void) | null {
+  const p = n.project ? project(n.project) : undefined;
+  if (n.source === "task" && p) return () => openIn(p.id, "task", { task: n.task });
+  if (n.report && p) return () => openIn(p.id, "review", { path: n.report });
+  if (n.source === "wiki" && p) return () => reviewProposal(p.id, n.id.split(":").slice(2).join(":"));
+  if (n.source === "filing") return () => document.querySelector(".hw.k-inbox")?.scrollIntoView({ behavior: "smooth" });
+  if (p) return () => go({ kind: "project", id: p.id });
+  return null;
+}
+function compactRow(title: string, note: string | HTMLElement, onclick: (() => void) | null, lead?: HTMLElement | string, cls = ""): HTMLElement {
+  return h("button", { class: `crow ${cls}`, onclick: onclick || undefined, disabled: !onclick }, lead || "", h("span", { class: "crow-t" }, title), h("span", { class: "muted small crow-n" }, note));
+}
+
+registerKind("needs", { draw: (c) => {
+  const needs = (desk?.needs || []).filter(inScope(c));
+  if (c.shape === "compact") {
+    const real = needs.filter((n) => n.kind !== "stale");
+    return real.length ? real.map((n) => compactRow(n.title, h("span", {}, tag(n.project), " ", n.kind || n.source), needOpen(n), h("span", { class: `dot k-${n.kind}` }))) : [empty("Nothing is waiting on you.")];
+  }
+  return needsList(needs);
+} });
+
+registerKind("running", { draw: (c) => {
+  const run = (desk?.running || []).filter(inScope(c));
+  if (!run.length) return [empty("No agents working right now.")];
+  if (c.shape === "compact") return run.map((r) => compactRow(r.title, h("span", {}, tag(r.project), " ", r.source === "foreman" ? "foreman" : "task agent"), r.task ? () => openIn(r.project!, "task", { task: r.task }) : null, h("span", { class: "busy-dot" })));
+  return run.map((r) => h("div", { class: "card run" },
+    h("div", { class: "card-top" }, h("span", { class: "busy-dot" }), h("b", {}, r.title), tag(r.project), h("span", { class: "muted small grow-r" }, r.source === "foreman" ? "foreman" : "task agent")),
+    r.detail ? h("div", { class: "muted small" }, r.detail) : "",
+    r.task ? h("div", { class: "row" }, h("button", { onclick: () => openIn(r.project!, "task", { task: r.task }) }, "Follow along")) : ""));
+} });
+
+const taskCols: [string, string, string[]][] = [["Draft", "draft", ["draft"]], ["Running", "running", ["running"]], ["Needs you", "needs-input", ["needs-input"]], ["Finished", "done", ["done", "failed", "stopped"]]];
+registerKind("tasks", { draw: (c) => {
+  const ts = (desk?.desk.tasks || []).filter(inScope(c)).filter((t) => !t.reviewed).sort((a, b) => b.updated.localeCompare(a.updated));
+  if (!ts.length) return [empty("No dispatched tasks. A project's agent can draft one, or use + Task in a project.")];
+  const row = (t: any) => compactRow(t.title, h("span", {}, tag(t.project), " ", ago(t.updated)), () => openIn(t.project, "task", { task: t.id }), h("span", { class: `status st-${t.status}` }, statusLabel[t.status] || t.status));
+  if (c.shape === "board") return [h("div", { class: "mini-board" }, ...taskCols.map(([label, cls, sts]) => {
+    const col = ts.filter((t) => sts.includes(t.status));
+    return h("div", { class: "mb-col" }, h("div", { class: `mb-h st-${cls}` }, label, h("span", { class: "muted small" }, ` ${col.length}`)),
+      ...col.map((t) => h("button", { class: "mb-card", onclick: () => openIn(t.project, "task", { task: t.id }) }, h("span", {}, t.title), tag(t.project))));
+  }))];
+  return ts.map(row);
+} });
+
+registerKind("items", { draw: (c) => {
+  const its = (desk?.desk.items || []).filter(inScope(c)).filter((i) => i.state === "open");
+  if (!its.length) return [empty("No open items.")];
+  return its.map((i) => h("div", { class: "crow" },
+    c.shape === "list" ? h("input", { type: "checkbox", title: "Done", onclick: () => send({ t: "itemUpdate", item: i.id, state: "done" }) }) : "",
+    h("span", { class: `kind k-${i.kind}` }, i.kind), h("span", { class: "crow-t" }, i.title), h("span", { class: "muted small crow-n" }, tag(i.project))));
+} });
+
+registerKind("workstreams", { draw: (c) => {
+  const rows: HTMLElement[] = [];
+  for (const p of projects().filter((p) => !c.project || p.id === c.project)) {
+    for (const w of (p.workstreams || []).filter((w) => !w.closed)) {
+      const open = w.report ? () => openIn(p.id, "review", { path: `${p.id}/${w.report}` }) : () => go({ kind: "project", id: p.id });
+      rows.push(c.shape === "compact"
+        ? compactRow(w.name, h("span", {}, c.project ? "" : tag(p.id), ` ${w.reportStatus || ""} · ${ago(w.updated)}`), open, h("span", { class: `status ws-${w.agentStatus}` }, w.agentStatus || "?"))
+        : h("div", { class: "card ws-card", onclick: open }, h("div", { class: "card-top" }, h("span", { class: `status ws-${w.agentStatus}` }, w.agentStatus || "?"), h("b", {}, w.name), c.project ? "" : tag(p.id), h("span", { class: "muted small grow-r" }, ago(w.updated))),
+          w.summary ? h("div", { class: "muted small" }, w.summary) : ""));
+    }
+  }
+  return rows.length ? rows : [empty("No open foreman workstreams.")];
+} });
+
+registerKind("inbox", { draw: () => {
+  const caps = (desk?.desk.captures || []).filter((c) => c.status === "new" || c.status === "proposed");
+  return caps.length ? caps.map(captureCard) : [empty("Nothing to file. Captures land here with the home agent's proposal.")];
+} });
+
+registerKind("capture", { create: () => ({ el: captureBox() }) });
+
+registerKind("projects", { draw: (c) => {
+  if (c.shape === "list") return projects().map((p) => compactRow(p.name, `${needsCount(p.id) ? needsCount(p.id) + " need you · " : ""}${ago(p.lastActivity)}`, () => go({ kind: "project", id: p.id }), ic("folder")));
+  return [h("div", { class: "proj-grid" }, ...projects().map(projectCard), h("button", { class: "card add-card", onclick: addFolder }, ic("plus"), " Add a project"))];
+} });
+
+initHome({
+  greeting: () => {
+    if (isFirstRun()) return h("div", { class: "hero" },
+      h("h1", {}, "Let's set up your desk."),
+      h("p", {}, "Nexus is where you plan and do project work with agents. Tell the home agent what you work on: it can scan your workspace for projects (foreman ledgers and git repos), read them, and arrange this screen with you."),
+      h("p", { class: "muted" }, "Nexus only reads your project folders. Its own state lives in its data directory."));
+    const run = desk?.running || [];
+    return h("div", { class: "greet" },
+      h("h2", {}, new Date().toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" })),
+      h("div", { class: "muted" }, `${projects().length} project${projects().length === 1 ? "" : "s"} · `, h("button", { class: "link", onclick: () => toggleNeeds() }, `${needsCount()} need you`), ` · ${run.length} running`));
+  },
+  chips: (agent) => {
+    if (agent !== "home") return [{ label: "What's left here?" }, { label: "What changed this week?" }];
+    if (isFirstRun()) return [{ label: "Find my projects", text: "Find my projects and help me set up." }, { label: "Add a folder myself", run: addFolder }];
+    return [{ label: "What needs me?" }, { label: "What's running?" }, { label: "Set up my home screen", text: "Set up my home screen: put what needs me under this box, and what's running beside it." }];
+  },
+  openChats: (agent) => openChats(agent),
+  agentName,
+});
+setRedraw(() => drawHome());
+
+// The count in the top bar always works, whatever is on the home screen:
+// it answers in the prompt box (or opens the home conversation).
+function toggleNeeds() {
+  if (view.kind !== "home") go({ kind: "home" });
+  const l = desk?.desk.layouts?.home?.widgets || [];
+  if (l.some((w) => w.kind === "needs" && !w.scope)) { document.querySelector(".hw.k-needs")?.scrollIntoView({ behavior: "smooth" }); return; }
+  openChats("home");
+  send({ t: "chat", agent: "home", text: "What needs me?", view: "" });
+}
+
+function drawHome() {
+  document.body.classList.toggle("first-run", isFirstRun());
+  if (!desk) { $("home").replaceChildren(h("div", { class: "muted pad" }, "Connecting…")); return; }
+  drawHomeGrid($("home"));
 }
 
 async function addFolder() {
@@ -504,6 +555,9 @@ document.addEventListener("keydown", (e) => {
   if (e.ctrlKey && e.shiftKey && (e.code === "Space" || e.key === " ")) { e.preventDefault(); captureModal(); }
 });
 $("capture-btn").addEventListener("click", captureModal);
+$("chats-btn").addEventListener("click", () => toggleChats());
+initApps({ openIn, openTasks: () => toast("The Tasks app is next in this build", "warn") });
+$("apps-slot").append(appsButton());
 
 // ---------------- notifications and secure cards ----------------
 
@@ -567,18 +621,23 @@ function draw() {
   projChat.drawCtx();
 }
 
-on("state", () => { render(); drawTop(); projChat.drawCtx(); widgetsRefresh(); });
+on("state", () => { render(); drawTop(); projChat.drawCtx(); if (view.kind === "home") drawHome(); });
 on("desk", () => draw());
 on("busy", () => drawTop());
 on("disconnected", () => toast("Lost connection to the core; reconnecting…", "warn"));
 on("turnEnd", () => position());
-on("pluginChanged", () => widgetsRefresh());
-function widgetsRefresh() { if (view.kind === "home") drawWidgets(); }
+on("pluginChanged", () => { if (view.kind === "home") drawHome(); });
+on("homeChanged", (m) => toastAgentChange(m));
 
 // Refresh "x ago" labels now and then.
 setInterval(() => { if (view.kind === "home") drawHome(); }, 60_000);
 
 draw();
 connect();
+// Deep links: #customize opens Customize manually; #chats or #chats=<agent>
+// opens the Chats panel (agents can point you at these too).
+const hashArgs = new URLSearchParams(location.hash.slice(1));
+if (hashArgs.has("customize")) on("desk", function once() { startEditing(); drawHome(); });
+if (hashArgs.has("chats")) on("desk", () => { if (!(window as any)._chatsOpened) { (window as any)._chatsOpened = true; openChats(hashArgs.get("chats") || undefined); } });
 (window as any).nexusProjectOfSpace = (sid: string) => projects().find((p) => p.space === sid)?.id || "";
 (window as any).nexusDebug = { app: () => app, desk: () => desk, views: allViews, md };

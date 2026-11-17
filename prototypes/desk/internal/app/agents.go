@@ -4,7 +4,10 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -26,6 +29,9 @@ type RunSpec struct {
 	Kind    string
 	Token   string // this agent's own token for the tool endpoint
 	WorkDir string
+	// Instructions is extra system-prompt text for this agent: the skills
+	// for its kind, rendered with text generated from the code.
+	Instructions string
 }
 
 // AgentFactory starts agent loops. pi is the prototype implementation; a
@@ -70,6 +76,8 @@ type Run struct {
 
 	draftChars int       // size of the tool call the model is still writing
 	draftSent  time.Time // last progress broadcast
+
+	saveT *time.Timer // debounced transcript save
 }
 
 func newToken() string {
@@ -109,6 +117,8 @@ func (a *App) run(id string) (*Run, error) {
 		old.mu.Lock()
 		r.chat, r.seq = old.chat, old.seq // keep the transcript visible
 		old.mu.Unlock()
+	} else {
+		r.chat, r.seq = a.loadChat(id)
 	}
 	a.runs[id] = r
 	a.byToken[r.Token] = r
@@ -165,7 +175,7 @@ func (r *Run) ensureStarted() error {
 	if p, ok := r.a.Projects.Get(r.Project); ok {
 		wd = p.Path
 	}
-	be, err := r.a.cfg.Agents.Start(context.Background(), RunSpec{ID: r.ID, Kind: r.Kind, Token: r.Token, WorkDir: wd})
+	be, err := r.a.cfg.Agents.Start(context.Background(), RunSpec{ID: r.ID, Kind: r.Kind, Token: r.Token, WorkDir: wd, Instructions: r.a.instructionsFor(r.Kind)})
 	if err != nil {
 		return err
 	}
@@ -191,6 +201,7 @@ func (r *Run) add(m ChatMsg) ChatMsg {
 	}
 	r.mu.Unlock()
 	r.a.broadcast(map[string]any{"t": "chat", "agent": r.ID, "msg": m})
+	r.persistSoon()
 	return m
 }
 
@@ -214,6 +225,82 @@ func (r *Run) closeStream() {
 		r.chat[n-1].Done = true
 	}
 	r.mu.Unlock()
+	r.persistSoon()
+}
+
+// ---- transcripts on disk ----
+//
+// Transcripts live in the data directory (chats/<agent>.json), so every
+// conversation is still there after a restart, whether or not a chat widget
+// shows it. The model's own context is the loop's business (pi sessions).
+
+type chatFile struct {
+	ID       string    `json:"id"`
+	Seq      int       `json:"seq"`
+	Messages []ChatMsg `json:"messages"`
+}
+
+func (a *App) chatPath(id string) string {
+	safe := strings.NewReplacer(":", "_", "/", "_", "\\", "_").Replace(id)
+	return filepath.Join(a.cfg.DataDir, "chats", safe+".json")
+}
+
+func (a *App) loadChat(id string) ([]ChatMsg, int) {
+	b, err := os.ReadFile(a.chatPath(id))
+	if err != nil {
+		return nil, 0
+	}
+	var f chatFile
+	if json.Unmarshal(b, &f) != nil || f.ID != id {
+		return nil, 0
+	}
+	for i := range f.Messages {
+		f.Messages[i].Done = true // nothing is mid-stream after a restart
+	}
+	return f.Messages, f.Seq
+}
+
+// loadChats brings back every saved conversation at startup, so the shell
+// can list and reopen them.
+func (a *App) loadChats() {
+	paths, _ := filepath.Glob(filepath.Join(a.cfg.DataDir, "chats", "*.json"))
+	for _, p := range paths {
+		b, err := os.ReadFile(p)
+		if err != nil {
+			continue
+		}
+		var f chatFile
+		if json.Unmarshal(b, &f) != nil || f.ID == "" {
+			continue
+		}
+		a.run(f.ID) // the agent (not its loop) with its transcript; gone projects and tasks are skipped
+	}
+}
+
+func (r *Run) persistSoon() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.saveT != nil {
+		r.saveT.Stop()
+	}
+	r.saveT = time.AfterFunc(400*time.Millisecond, r.persist)
+}
+
+func (r *Run) persist() {
+	r.mu.Lock()
+	f := chatFile{ID: r.ID, Seq: r.seq, Messages: append([]ChatMsg(nil), r.chat...)}
+	r.mu.Unlock()
+	if len(f.Messages) == 0 {
+		return
+	}
+	p := r.a.chatPath(r.ID)
+	if os.MkdirAll(filepath.Dir(p), 0o700) != nil {
+		return
+	}
+	b, _ := json.Marshal(f)
+	if os.WriteFile(p+".tmp", b, 0o600) == nil {
+		os.Rename(p+".tmp", p)
+	}
 }
 
 func (r *Run) setBusy(b bool) {
@@ -327,6 +414,7 @@ func (r *Run) pump() {
 			if upd != nil {
 				r.a.broadcast(map[string]any{"t": "chatUpdate", "agent": r.ID, "msg": upd})
 			}
+			r.persistSoon()
 		case agent.EventTurnEnd:
 			r.closeStream()
 			r.setBusy(false)

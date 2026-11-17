@@ -294,8 +294,12 @@ func TestPluginWriteValidation(t *testing.T) {
 	if _, err := call(t, a, "home", "widget_write", map[string]any{"id": "glance", "name": "Glance", "html": "<p>x</p>", "permissions": []any{"tool:projects_summary"}}); err != nil {
 		t.Fatal(err)
 	}
-	if w := a.Desk.Snapshot().Widgets; len(w) != 1 || w[0].Plugin != "glance" {
-		t.Fatalf("widget not on the dashboard: %+v", w)
+	l := a.Desk.Layout("home")
+	if n := len(l.Widgets); n != 2 || l.Widgets[1].Kind != "plugin" || l.Widgets[1].Plugin != "glance" {
+		t.Fatalf("widget not on the home screen: %s", a.describeHome())
+	}
+	if w, ok := a.Desk.Widget(l.Widgets[1].ID); !ok || w.Plugin != "glance" {
+		t.Fatal("the plugin bridge can't find the widget")
 	}
 }
 

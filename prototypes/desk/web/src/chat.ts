@@ -17,6 +17,15 @@ function list(agent: string): Msg[] {
 }
 export const isBusy = (agent: string) => !!busy.get(agent);
 export const hasTranscript = (agent: string) => (transcripts.get(agent)?.length || 0) > 0;
+export const transcriptOf = (agent: string): Msg[] => transcripts.get(agent) || [];
+/** Agents with a saved conversation (the core reloads them at startup). */
+export const knownAgents = (): string[] => [...transcripts.keys()].filter(hasTranscript);
+export type ChatEvent = "reset" | "add" | "delta" | "update" | "busy";
+/** onChat calls f for every change to any transcript; returns an unsubscribe. */
+export function onChat(f: (agent: string, kind: ChatEvent, m?: Msg) => void): () => void {
+  listeners.add(f);
+  return () => { listeners.delete(f); };
+}
 
 on("chatHistory", (m) => { transcripts.set(m.agent, m.messages || []); busy.set(m.agent, !!m.busy); listeners.forEach((f) => f(m.agent, "reset")); });
 on("chat", (m) => { list(m.agent).push(m.msg); listeners.forEach((f) => f(m.agent, "add", m.msg)); });
@@ -71,6 +80,76 @@ export type ChatOpts = {
   ctxLine?: () => HTMLElement | string | null; // "what the agent sees" line
   compact?: boolean;
 };
+
+/** MiniChat is the minimal style of the chat widget: a prompt box, a few
+ *  suggestions, and the latest exchange. The whole conversation is one click
+ *  away (onHistory opens it in the Chats panel). */
+export type MiniOpts = {
+  placeholder?: string;
+  chips?: () => { label: string; text?: string; run?: () => void }[];
+  intro?: () => HTMLElement | null;
+  onHistory?: () => void;
+  context?: () => { view?: string };
+};
+export class MiniChat {
+  el: HTMLElement;
+  private input: HTMLTextAreaElement;
+  private out: HTMLElement;
+  private chipsEl: HTMLElement;
+  private introEl: HTMLElement;
+  private off: () => void;
+  private raf = 0;
+  constructor(public agent: string, private opts: MiniOpts = {}) {
+    this.input = h("textarea", { rows: 1, placeholder: opts.placeholder || "Ask anything" }) as HTMLTextAreaElement;
+    const sendBtn = h("button", { type: "submit", class: "primary" }, "Ask");
+    const form = h("form", { class: "mini-form" }, this.input, sendBtn);
+    form.addEventListener("submit", (e) => { e.preventDefault(); this.submit(); });
+    this.input.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); this.submit(); } });
+    this.input.addEventListener("input", () => { this.input.rows = Math.min(6, Math.max(1, this.input.value.split("\n").length)); });
+    this.out = h("div", { class: "mini-out" });
+    this.chipsEl = h("div", { class: "chips" });
+    this.introEl = h("div", { class: "mini-intro" });
+    this.el = h("div", { class: "mini-chat" }, this.introEl, form, this.chipsEl, this.out);
+    this.off = onChat((agent, kind) => { if (agent === this.agent) this.schedule(kind === "delta"); });
+    this.draw();
+  }
+  destroy() { this.off(); }
+  focus() { this.input.focus(); }
+  ask(text: string) { this.input.value = text; this.submit(); }
+  private submit() {
+    const text = this.input.value.trim();
+    if (!text) return;
+    send({ t: "chat", agent: this.agent, text, selection: "", view: this.opts.context?.().view || "" });
+    this.input.value = ""; this.input.rows = 1;
+  }
+  private schedule(_delta: boolean) {
+    if (this.raf) return;
+    this.raf = requestAnimationFrame(() => { this.raf = 0; this.draw(); });
+  }
+  draw() {
+    const intro = this.opts.intro?.();
+    this.introEl.replaceChildren(...(intro ? [intro] : []));
+    this.chipsEl.replaceChildren(...(this.opts.chips?.() || []).map((c) => h("button", { type: "button", class: "chip", onclick: () => c.run ? c.run() : this.ask(c.text || c.label) }, c.label)));
+    const msgs = transcriptOf(this.agent);
+    let i = msgs.length - 1;
+    while (i >= 0 && msgs[i].role !== "you") i--; // your last question; prompts Nexus sent on its own stay in the history
+    const last = i >= 0 ? msgs.slice(i) : [];
+    const kids: HTMLElement[] = [];
+    const tools: string[] = [];
+    for (const m of last) {
+      if (m.role === "you") kids.push(h("div", { class: "msg you" }, m.text));
+      else if (m.role === "app") continue;
+      else if (m.role === "agent" && m.text.trim()) kids.push(h("div", { class: "msg agent", html: md(m.text) }));
+      else if (m.role === "tool") tools.push((m.error ? "⚠ " : "") + (toolLabels[m.tool || ""] || m.tool || "tool"));
+      else if (m.role === "system" && m.error) kids.push(h("div", { class: "msg system error" }, m.text));
+    }
+    if (tools.length) kids.splice(1, 0, h("div", { class: "mini-tools muted small" }, "Used: " + tools.join(" · ")));
+    if (isBusy(this.agent)) kids.push(h("div", { class: "muted small" }, h("span", { class: "busy-dot" }), " working…", h("button", { type: "button", class: "link", onclick: () => send({ t: "abort", agent: this.agent }) }, "Stop")));
+    const talk = (l: Msg[]) => l.filter((m) => m.role === "you" || m.role === "agent").length;
+    if (talk(msgs) > talk(last)) kids.push(h("button", { type: "button", class: "link small", onclick: () => this.opts.onHistory?.() }, `Conversation history (${talk(msgs)} messages)`));
+    this.out.replaceChildren(...kids);
+  }
+}
 
 export class ChatPanel {
   el: HTMLElement;

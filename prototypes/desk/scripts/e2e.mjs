@@ -96,7 +96,30 @@ ok("handle works through the broker, value never returned", !r.isError && !r.tex
 console.log("widgets");
 r = await call("home", "widget_write", { id: "glance", name: "Glance", html: "<p>hi</p>", permissions: ["tool:projects_summary"] });
 await sleep(300);
-ok("home agent puts a widget on the dashboard", desk.desk.widgets?.some((w) => w.plugin === "glance"));
+ok("home agent puts a widget on the home screen", desk.desk.layouts?.home?.widgets?.some((w) => w.kind === "plugin" && w.plugin === "glance"));
+
+console.log("home screen (layout as data)");
+const home = () => desk.desk.layouts?.home?.widgets || [];
+ok("the custom widget sits under the prompt box", home()[0]?.kind === "chat" && home()[0]?.shape === "minimal");
+r = await call("home", "home_add", { kind: "needs", position: 2, reason: "e2e: what needs me" });
+await sleep(300);
+ok("the home agent adds a built-in widget", !r.isError && home()[1]?.kind === "needs" && home()[1]?.by === "agent", r.text);
+ok("…and the shell is told, to offer Undo", seen.some((m) => m.t === "homeChanged" && m.by === "agent"));
+r = await call("home", "home_change", { id: "needs", shape: "board", reason: "e2e" });
+ok("a bad shape is refused with the fix", r.isError && /Use one of: list, compact/.test(r.text), r.text);
+r = await call("p:demo", "home_add", { kind: "needs", reason: "e2e" });
+ok("project agents can't change the home screen", r.isError);
+send({ t: "homeGrid", cols: 2, tiling: "tile", space: "" });
+send({ t: "homeChange", id: home()[1].id, w: 2, h: 3, space: "" });
+await sleep(300);
+ok("you change the grid and a widget from the shell", desk.desk.layouts.home.cols === 2 && desk.desk.layouts.home.tiling === "tile" && home()[1].w === 2 && home()[1].h === 3);
+send({ t: "homeUndo", space: "" }); send({ t: "homeUndo", space: "" });
+await sleep(300);
+ok("undo walks back your changes", desk.desk.layouts.home.cols === 3 && home()[1].h === undefined);
+r = await call("home", "home_reset", { to: "dashboard", reason: "e2e" });
+await sleep(300);
+ok("dashboard preset keeps the custom widget", home().length === 7 && home().some((w) => w.plugin === "glance"), JSON.stringify(home().map((w) => w.kind)));
+ok("the catalog reaches the shell", desk.homeKinds?.some((k) => k.kind === "needs" && k.shapes.includes("compact")));
 
 console.log("project wiki");
 r = await call("p:demo", "wiki_write", { page: "index", content: "# Demo\n\nWhat this is: a scratch project.\n\n## Pages\n- [[plan]]: the plan\n", summary: "front page", sources: ["demo/README.md"] });

@@ -148,7 +148,7 @@ func (a *App) tools() []Tool {
 
 		// ---- dashboard widgets ----
 		{Name: "widget_write", Label: "Write widget", Kinds: H,
-			Description: "Create or update a dashboard widget: a plugin (one self-contained HTML file, see the plugin guide) placed on the home dashboard. It runs sandboxed with no network and gets data only through window.nexus for permissions the user grants.",
+			Description: "Create or update a custom widget: a plugin (one self-contained HTML file, see the plugin guide) placed on the home screen. Only for things no built-in widget kind shows (see home_add first). It runs sandboxed with no network and gets data only through window.nexus for permissions the user grants.",
 			Parameters: obj([]string{"id", "name", "html"}, map[string]any{
 				"id": sprop("lowercase-dashed id; reuse it to update"), "name": sprop("display name"), "description": sprop("one line"),
 				"permissions": aprop("e.g. ['tool:projects_summary']", sprop("")), "html": sprop("complete HTML document"), "wide": bprop("span two columns"),
@@ -263,7 +263,7 @@ func (a *App) tools() []Tool {
 }
 
 func (a *App) allTools() []Tool {
-	return append(append(a.tools(), a.wikiTools()...), a.codeTools()...)
+	return append(append(append(a.tools(), a.wikiTools()...), a.codeTools()...), a.homeTools()...)
 }
 
 // toolsFor is the tool set of one agent: by its kind, plus add-on tools
@@ -327,7 +327,8 @@ func (a *App) CallTool(r *Run, name string, args map[string]any) (string, error)
 		e.Denied = isDenial(err)
 	}
 	switch name {
-	case "layout_get", "plugin_list", "vault_list", "broker_list", "projects_list", "capture_list", "task_list", "wiki_list", "plan_update":
+	case "layout_get", "plugin_list", "vault_list", "broker_list", "projects_list", "capture_list", "task_list", "wiki_list", "plan_update",
+		"home_show", "home_add", "home_change", "home_remove", "home_grid", "home_reset", "home_undo": // home_* log through homeChanged
 	default:
 		a.Log.Add(e)
 	}

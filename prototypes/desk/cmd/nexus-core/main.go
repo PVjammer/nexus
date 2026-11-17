@@ -56,10 +56,14 @@ func (f piFactory) Start(ctx context.Context, s app.RunSpec) (agent.Backend, err
 	safe := strings.NewReplacer(":", "-", "/", "-").Replace(s.ID)
 	sessDir := filepath.Join(f.dataDir, "pi-sessions", safe)
 	prior, _ := filepath.Glob(filepath.Join(sessDir, "*.jsonl"))
+	sys, err := composeInstructions(f.dataDir, safe, filepath.Join(f.piDir, s.Kind+".md"), s.Instructions)
+	if err != nil {
+		return nil, err
+	}
 	p := agent.NewPi(agent.PiConfig{
 		Continue: len(prior) > 0, // an agent that was stopped picks up where it left off
 		Binary: f.bin, Model: f.modelFor(s.Kind), Extension: f.ext,
-		SystemExtra:  filepath.Join(f.piDir, s.Kind+".md"),
+		SystemExtra:  sys,
 		SessionDir:   sessDir,
 		WorkDir:      s.WorkDir,
 		BuiltinTools: f.builtins,
@@ -73,12 +77,31 @@ func (f piFactory) Start(ctx context.Context, s app.RunSpec) (agent.Backend, err
 	return p, nil
 }
 
+// composeInstructions writes the agent's instructions (its kind's file plus
+// its skills) to one file in the data directory and returns the path.
+func composeInstructions(dataDir, safe, base, extra string) (string, error) {
+	if extra == "" {
+		return base, nil
+	}
+	b, err := os.ReadFile(base)
+	if err != nil {
+		return "", err
+	}
+	dir := filepath.Join(dataDir, "prompts")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
+	}
+	p := filepath.Join(dir, safe+".md")
+	return p, os.WriteFile(p, []byte(strings.TrimSpace(string(b))+"\n\n"+extra+"\n"), 0o600)
+}
+
 func main() {
 	home, _ := os.UserHomeDir()
 	var scan, addProjects multi
 	addr := flag.String("addr", "127.0.0.1:8741", "listen address (keep it on loopback)")
 	dataDir := flag.String("data", filepath.Join(home, ".local", "share", "nexus-desk"), "data directory")
 	webDir := flag.String("web", "web", "web assets directory")
+	skillsDir := flag.String("skills", "skills", "agent skills directory (SKILL.md per skill)")
 	agentKind := flag.String("agent", "pi", "agent loop: pi | none")
 	model := flag.String("model", "", "pi model for every agent, as provider/id[:thinking] (default: pi's configured default)")
 	modelHome := flag.String("model-home", "", "model for the home agent (overrides -model), e.g. spark/Qwen3.6-35B-A3B:low")
@@ -100,7 +123,7 @@ func main() {
 	v, err := vault.Open(*vaultPath)
 	must(err)
 
-	cfg := app.Config{DataDir: *dataDir, WebDir: *webDir, Token: token, ScanRoots: scan, TestHooks: *testHooks}
+	cfg := app.Config{DataDir: *dataDir, WebDir: *webDir, SkillsDir: *skillsDir, Token: token, ScanRoots: scan, TestHooks: *testHooks}
 	if *agentKind == "pi" {
 		ext, _ := filepath.Abs("pi/nexus-tools.ts")
 		piDir, _ := filepath.Abs("pi")

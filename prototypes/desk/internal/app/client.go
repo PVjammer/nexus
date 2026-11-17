@@ -240,9 +240,15 @@ func (a *App) handleClient(c *client, m map[string]any, raw []byte) {
 		a.broadcastDesk()
 		reply(map[string]any{"t": "saved", "path": p})
 
-	// ---- widgets ----
+	// ---- widgets and the home screen ----
 	case "widgetRemove":
 		a.Desk.RemoveWidget(str(m["widget"]))
+	case "homeAdd", "homeChange", "homeRemove", "homeGrid", "homeReset", "homeUndo":
+		if err := a.handleHome(t, m); err != nil {
+			fail(err)
+		} else {
+			reply(map[string]any{"t": "ok"})
+		}
 
 	// ---- layout (per project space) ----
 	case "activate":

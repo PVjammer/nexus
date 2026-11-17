@@ -33,6 +33,7 @@ import (
 type Config struct {
 	DataDir   string
 	WebDir    string
+	SkillsDir string   // agent skills (default "skills")
 	Token     string   // the shell's websocket token
 	ScanRoots []string // where onboarding looks for projects
 	Agents    AgentFactory
@@ -143,6 +144,7 @@ func New(cfg Config, v *vault.Vault) (*App, error) {
 		a.watcher = w
 		go a.watchLoop()
 	}
+	a.loadChats()
 	a.refreshDetails()
 	go a.pollProjects()
 	go a.codegraphLoop()
