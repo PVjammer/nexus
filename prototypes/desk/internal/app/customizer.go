@@ -61,7 +61,7 @@ func (a *App) layoutFor(by string) string {
 
 func afterNote(c *Ctx) string {
 	if byOf(c) == byCustomizer {
-		return "This is on the draft: the user sees it when you finish."
+		return "Done. When your turn ends, Nexus shows it to the user to try, with Keep and Roll back. Nothing else to do: don't undo it, just say what you changed in one line."
 	}
 	return "The user can undo it."
 }

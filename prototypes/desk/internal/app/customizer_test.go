@@ -9,7 +9,7 @@ func TestCustomizerWorksOnADraft(t *testing.T) {
 	a, _ := newTestApp(t)
 	before := a.Desk.Layout("home")
 	out := mustCall(t, a, customizerID, "home_add", map[string]any{"kind": "needs", "reason": "show what needs me"})
-	if !strings.Contains(out, "on the draft") {
+	if !strings.Contains(out, "Keep and Roll back") {
 		t.Fatalf("the customizer should be told it's a draft: %s", out)
 	}
 	if len(a.Desk.Layout("home").Widgets) != len(before.Widgets) {

@@ -171,7 +171,7 @@ const nHome = home().length;
 r = await call("customizer", "home_add", { kind: "running", reason: "e2e: show running" });
 await sleep(300);
 const cz = () => [...seen].reverse().find((m) => m.t === "customizer")?.customizer || desk.customizer;
-ok("its changes go to a draft; the live screen is untouched", !r.isError && home().length === nHome && /draft/.test(r.text), r.text);
+ok("its changes go to a draft; the live screen is untouched", !r.isError && home().length === nHome && /Keep and Roll back/.test(r.text), r.text);
 ok("the shell sees what's being built", cz()?.added?.length === 1 && cz()?.draft?.widgets?.length === nHome + 1, JSON.stringify(cz()));
 r = await call("customizer", "work_task_add", { title: "x", reason: "e2e" });
 ok("it only has the layout tools", r.isError);
