@@ -12,7 +12,7 @@ export type WorkTask = {
 };
 export type WorkItem = {
   ref: string; project: string; title: string; source: string; sourceState?: string; detail?: string; report?: string;
-  state: "in-progress" | "parked" | "not-started"; parkNote?: string; doneWhen?: string[]; open: number; done: number;
+  state: "in-progress" | "parked" | "not-started" | "done"; parkNote?: string; closed?: string; closeout?: string; claimed?: string; doneWhen?: string[]; open: number; done: number;
   move: string; moveNote?: string; updated: string; brief?: string; unshaped?: boolean;
 };
 export type Proposal = {
@@ -42,7 +42,7 @@ function waitingOn(t: WorkTask) {
 }
 const live = (t: WorkTask) => !t.item || !itemOf(t.item) || itemOf(t.item)!.state === "in-progress";
 
-type Hooks = { openWorkspace: (ref: string, task?: string) => void; openProject: (pid: string) => void };
+type Hooks = { openWorkspace: (ref: string, task?: string) => void; openProject: (pid: string) => void; openRun: (pid: string, task: string) => void };
 let hooks: Hooks;
 export function initWork(h_: Hooks) { hooks = h_; }
 export const openWorkspace = (ref: string, task?: string) => hooks.openWorkspace(ref, task);
@@ -76,6 +76,35 @@ export function startItem(w: WorkItem) {
       h("span", { class: "grow" }), h("button", { onclick: close }, "Cancel"), h("button", { class: "primary", onclick: () => { go(); close(); } }, "Start anyway"))));
 }
 
+// ---- done ----
+
+/** markDone: your Done is the acknowledgement, so no confirm. The toast has
+ *  Undo, and a closeout agent wraps it up (report, what's left, loose ends). */
+export async function markDone(w: WorkItem) {
+  if (await act({ t: "workItemDone", item: w.ref }) === null) return;
+  toast(`Done: ${w.title}. Closing it out: a report, what's left, loose ends.`, "info", { label: "Undo", run: () => act({ t: "workItemReopen", item: w.ref }) });
+}
+const doneBtn = (w: WorkItem, primary = false) => h("button", { class: primary || w.claimed ? "primary" : "", title: "It's done: it leaves your lists and gets closed out. Undo is in the toast.", onclick: () => markDone(w) }, ic("check"), w.claimed ? " Yes, it's done" : " Done");
+const claimLine = (w: WorkItem) => w.claimed ? h("div", { class: "claim-line small" }, ic("check"), ` The ${w.claimed} says it's done. Is it?`) : "";
+const closeoutOf = (w: WorkItem) => w.closeout ? ((desk?.desk.tasks || []) as any[]).find((t) => t.id === w.closeout) : undefined;
+function closeoutBtn(w: WorkItem): HTMLElement | "" {
+  const t = closeoutOf(w);
+  if (!t) return "";
+  const label = t.status === "done" ? "Closeout report" : t.status === "running" ? "Closing out…" : `Closeout: ${t.status}`;
+  return h("button", { class: "link small", onclick: () => hooks.openRun(w.project, t.id) }, ic("doc"), " ", label);
+}
+
+/** doneList: work you've finished, newest first: out of your lists, never gone. */
+export function doneList(pid?: string): HTMLElement[] {
+  const done = items().filter((w) => w.state === "done" && (!pid || w.project === pid)).sort((a, b) => (b.closed || "").localeCompare(a.closed || ""));
+  if (!done.length) return [];
+  return [h("details", { class: "done-list" }, h("summary", {}, `Done (${done.length})`),
+    ...done.map((w) => h("div", { class: "crow wi-row" },
+      h("span", { class: "wi-row-main" }, h("button", { class: "link crow-t", onclick: () => hooks.openWorkspace(w.ref) }, w.title), closeoutBtn(w)),
+      h("span", { class: "muted small crow-n" }, projTag(w.project), w.closed ? `done ${ago(w.closed)}` : ""),
+      h("button", { title: "Back to how it was, with its tasks", onclick: () => act({ t: "workItemReopen", item: w.ref }) }, "Reopen"))))];
+}
+
 function limitSetting(): HTMLElement {
   const inp = h("input", { type: "number", min: "0", max: "20", value: String(wipLimit()), style: { width: "56px" },
     onchange: (e: Event) => act({ t: "workLimit", limit: Number((e.target as HTMLInputElement).value) }) });
@@ -85,6 +114,18 @@ function limitSetting(): HTMLElement {
 // ---- small pieces ----
 
 const projTag = (pid?: string) => pid ? h("span", { class: "tag" }, project(pid)?.name || pid) : "";
+/** tone: whose move a task is, as one word the CSS colours (cards, rows,
+ *  dots): you (amber), agent (purple), wait (blue), blocked (red), done (green). */
+export function tone(t: WorkTask): string {
+  if (t.status === "done") return "done";
+  if (needsMe(t) && live(t)) return "you";
+  if (t.assignee === "agent" && t.status === "doing") return "agent";
+  if (waitingOn(t)) return "wait";
+  if (t.status === "blocked") return "blocked";
+  return "none";
+}
+export const itemTone = (w: WorkItem) => w.state === "done" || w.claimed ? "done" : w.state !== "in-progress" ? "none" : w.unshaped && w.move === "none" ? "shape" : ({ you: "you", agent: "agent", waiting: "wait", blocked: "blocked" } as Record<string, string>)[w.move] || "none";
+
 export function whoChip(t: WorkTask): HTMLElement {
   if (t.status === "done") return h("span", { class: "wchip done" }, "Done");
   if (needsMe(t) && live(t)) return h("span", { class: "wchip you" }, t.status === "review" ? "Your review" : "Yours");
@@ -103,7 +144,7 @@ function blockedText(t: WorkTask): string {
 export function taskRow(t: WorkTask, opts: { showItem?: boolean } = {}): HTMLElement {
   const w = itemOf(t.item);
   const sub = t.status === "blocked" && blockedText(t) ? `after ${blockedText(t)}` : opts.showItem !== false ? (w ? w.title : "todo") : (t.note || "");
-  return h("button", { class: "trow", onclick: () => openTask(t.id) },
+  return h("button", { class: `trow tone-${tone(t)}`, onclick: () => openTask(t.id) },
     h("span", { class: "trow-main" }, h("span", { class: "trow-t" }, t.title), h("span", { class: "muted small" }, sub)),
     t.due ? h("span", { class: `due${t.due <= today() ? " late" : ""}` }, dueLabel(t.due)) : "",
     projTag(t.project), whoChip(t));
@@ -305,10 +346,11 @@ function nextTask(w: WorkItem) {
 function workItemCard(w: WorkItem): HTMLElement {
   const n = nextTask(w);
   const total = w.open + w.done;
-  return h("div", { class: "card wi-card" },
+  return h("div", { class: `card wi-card tone-${itemTone(w)}` },
     h("div", { class: "card-top" }, projTag(w.project), h("span", { class: "muted small" }, w.source), h("span", { class: "grow-r" }), moveChip(w)),
     h("b", { class: "wi-title", onclick: () => hooks.openWorkspace(w.ref) }, w.title),
     w.brief ? h("div", { class: "muted small wi-brief" }, w.brief) : "",
+    claimLine(w),
     w.unshaped ? h("div", { class: "row" }, shapeChip(), h("span", { class: "muted small" }, !(w.doneWhen || []).length ? "What does done look like?" : "No tasks yet.")) : "",
     total ? h("div", { class: "wi-prog" }, h("div", { class: "bar" }, h("span", { style: { width: `${Math.round((w.done / total) * 100)}%` } })), h("span", { class: "muted small" }, `${w.done} of ${total} tasks done`)) : "",
     n ? h("button", { class: "wi-next", onclick: () => openTask(n.id) }, h("span", { class: "muted small" }, "Next"), whoChip(n), " ", n.title)
@@ -317,7 +359,8 @@ function workItemCard(w: WorkItem): HTMLElement {
       w.unshaped ? shapeBtn(w, true) : "",
       h("button", { onclick: () => hooks.openWorkspace(w.ref) }, "Open workspace"),
       h("button", { onclick: () => addTask(w) }, ic("plus"), " Task"),
-      h("button", { title: "Hide it and its tasks until you bring it back", onclick: async () => { const note = await promptModal(`Park ${w.title}`, "Until… (optional), e.g. IT grants access"); if (note !== null) act({ t: "workItemSet", item: w.ref, state: "parked", parkNote: note || "" }); } }, "Park")));
+      h("button", { title: "Hide it and its tasks until you bring it back", onclick: async () => { const note = await promptModal(`Park ${w.title}`, "Until… (optional), e.g. IT grants access"); if (note !== null) act({ t: "workItemSet", item: w.ref, state: "parked", parkNote: note || "" }); } }, "Park"),
+      doneBtn(w, total > 0 && w.open === 0)));
 }
 
 export function notInProgress(pid?: string): HTMLElement[] {
@@ -371,7 +414,7 @@ function drawApp() {
   let body: (HTMLElement | null)[] = [];
   if (tab === "needs") body = needsList(pid);
   if (tab === "board") body = [h("div", { class: "row" }, h("button", { onclick: () => addTask(undefined, pid) }, ic("plus"), " Todo"), h("span", { class: "muted small" }, "Cards move when work happens; open one to change it.")), board(pid)];
-  if (tab === "items") body = [...pendingChecklists(pid), h("h4", {}, `In progress (${items().filter((w) => w.state === "in-progress").length})`), limitSetting(), ...workItemCards(pid, "cards", { noMore: true }), h("h4", {}, "Not in progress"), ...notInProgress(pid), ...setupList(pid),
+  if (tab === "items") body = [...pendingChecklists(pid), h("h4", {}, `In progress (${items().filter((w) => w.state === "in-progress").length})`), limitSetting(), ...workItemCards(pid, "cards", { noMore: true }), h("h4", {}, "Not in progress"), ...notInProgress(pid), ...doneList(pid), ...setupList(pid),
     h("div", { class: "row" }, h("button", { onclick: async () => { const p = pid || (desk?.projects || [])[0]?.id; if (!p) return; const t = await promptModal(`New work item in ${project(p)?.name}`, "What you want done, e.g. Add CSV export"); if (t) act({ t: "workItemAdd", project: p, title: t }); } }, ic("plus"), " Work item"),
       pid ? h("button", { title: "The project agent looks through it again for work it hasn't suggested before", onclick: () => startSetup(pid) }, "Find more work") : "")];
   if (tab === "todos") body = todos();
@@ -410,14 +453,18 @@ export function workItemView(ref: string, focus?: string) {
         h("span", { class: "grow-r" }), w.unshaped ? shapeChip() : "", moveChip(w),
         w.unshaped && ts.length ? shapeBtn(w) : "",
         w.report ? h("button", { onclick: () => hooks.openWorkspace("open-report:" + w.report) }, ic("doc"), " Report") : "",
-        w.state === "in-progress" ? h("button", { onclick: async () => { const note = await promptModal(`Park ${w.title}`, "Until… (optional)"); if (note !== null) act({ t: "workItemSet", item: w.ref, state: "parked", parkNote: note || "" }); } }, "Park")
-          : h("button", { class: "primary", onclick: () => startItem(w) }, w.state === "parked" ? "Bring back" : "Start")),
+        w.state === "done" ? h("button", { onclick: () => act({ t: "workItemReopen", item: w.ref }) }, "Reopen")
+          : w.state === "in-progress" ? h("button", { onclick: async () => { const note = await promptModal(`Park ${w.title}`, "Until… (optional)"); if (note !== null) act({ t: "workItemSet", item: w.ref, state: "parked", parkNote: note || "" }); } }, "Park")
+          : h("button", { class: "primary", onclick: () => startItem(w) }, w.state === "parked" ? "Bring back" : "Start"),
+        w.state === "in-progress" ? doneBtn(w, w.open === 0 && w.done > 0) : ""),
+      claimLine(w),
       w.state === "parked" ? h("div", { class: "banner" }, `Parked${w.parkNote ? ` ${w.parkNote}` : ""}. Its tasks are out of your lists until you bring it back.`) : "",
+      w.state === "done" ? h("div", { class: "banner done-banner" }, `Done${w.closed ? ` ${ago(w.closed)}` : ""}. It's out of your lists; Reopen brings it back with its tasks. `, closeoutBtn(w)) : "",
       ft ? taskPanel(ft, { docked: true, onClose: () => { focused = ""; draw(); } }) : "",
       h("div", { class: "wi-cols" },
         h("div", {},
           h("div", { class: "row" }, h("b", {}, "What's left"), h("span", { class: "grow-r" }), h("button", { onclick: () => addTask(w) }, ic("plus"), " Task")),
-          ...groups.filter(([, l]) => l.length).flatMap(([g, l]) => [h("div", { class: "hint" }, `${g} · ${l.length}`), ...l.map((t) => h("button", { class: `trow${t.id === focused ? " on" : ""}`, onclick: () => { focused = t.id; draw(); } },
+          ...groups.filter(([, l]) => l.length).flatMap(([g, l]) => [h("div", { class: "hint" }, `${g} · ${l.length}`), ...l.map((t) => h("button", { class: `trow tone-${tone(t)}${t.id === focused ? " on" : ""}`, onclick: () => { focused = t.id; draw(); } },
             h("span", { class: "trow-main" }, h("span", { class: "trow-t" }, t.title), t.status === "blocked" && blockedText(t) ? h("span", { class: "muted small" }, `after ${blockedText(t)}`) : ""), whoChip(t)))]),
           !ts.length ? h("div", { class: "empty-note" }, "No tasks yet. Add the next concrete action, or ", shapeBtn(w, true), " it: the agent asks a few questions, then proposes tasks.") : "",
           ...pendingChecklists(undefined, w.ref)),

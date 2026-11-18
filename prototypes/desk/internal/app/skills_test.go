@@ -12,7 +12,7 @@ import (
 var jsonBlock = regexp.MustCompile("(?s)```json\n(.*?)```")
 
 // exampleAgent: which agent a skill's examples run as (default home).
-var exampleAgent = map[string]string{"onboarding": "p:alpha"}
+var exampleAgent = map[string]string{"onboarding": "p:alpha", "closeout": "closeout"}
 
 // TestSkillExamples runs every example tool call in every skill against the
 // real tools, so a skill can't teach a call the code no longer accepts.
@@ -49,6 +49,12 @@ func TestSkillExamples(t *testing.T) {
 			if agent == "" {
 				agent = "home"
 			}
+			if agent == "closeout" { // a closeout task agent for the work item
+				if _, err := a.closeWorkItem("Add CSV export"); err != nil {
+					t.Fatal(err)
+				}
+				agent = "t:" + a.tracked(a.mustRef(t, "Add CSV export")).Closeout
+			}
 			for _, c := range calls {
 				if _, err := call(t, a, agent, c.Tool, c.Args); err != nil {
 					t.Fatalf("%s example %d: %s %v failed: %v", name, i+1, c.Tool, c.Args, err)
@@ -76,4 +82,13 @@ func TestSkillsRenderWithTheCatalog(t *testing.T) {
 	if a.instructionsFor(KindTask) != "" {
 		t.Fatal("task agents don't get the home skill")
 	}
+}
+
+func (a *App) mustRef(t *testing.T, title string) string {
+	t.Helper()
+	w, err := a.checkItemRef(title)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return w.Ref
 }

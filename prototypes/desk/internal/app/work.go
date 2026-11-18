@@ -25,7 +25,7 @@ import (
 )
 
 var taskStatuses = []string{"todo", "doing", "blocked", "review", "done"}
-var itemStates = []string{"in-progress", "parked", "not-started"}
+var itemStates = []string{"in-progress", "parked", "not-started", "done"}
 
 var statusName = map[string]string{"todo": "To do", "doing": "In progress", "blocked": "Blocked", "review": "In review", "done": "Done"}
 
@@ -39,18 +39,22 @@ type WorkItem struct {
 	SourceState string   `json:"sourceState,omitempty"` // what the source says (e.g. working · needs-input)
 	Detail      string   `json:"detail,omitempty"`
 	Report      string   `json:"report,omitempty"` // app path
-	State       string   `json:"state"`            // in-progress | parked | not-started
+	State       string   `json:"state"`            // in-progress | parked | not-started | done
 	ParkNote    string   `json:"parkNote,omitempty"`
 	DoneWhen    []string `json:"doneWhen,omitempty"`
 	Brief       string   `json:"brief,omitempty"`
 	// Unshaped: in progress but nobody has said what done looks like, or
 	// there's no task yet. The Shape button asks the agent to fix that.
-	Unshaped bool      `json:"unshaped,omitempty"`
-	Open     int       `json:"open"`
-	Done     int       `json:"done"`
-	Move     string    `json:"move"` // you | agent | waiting | blocked | ready | none
-	MoveNote string    `json:"moveNote,omitempty"`
-	Updated  time.Time `json:"updated"`
+	Unshaped bool `json:"unshaped,omitempty"`
+	// Done: when, and the closeout task wrapping it up.
+	Closed   *time.Time `json:"closed,omitempty"`
+	Closeout string     `json:"closeout,omitempty"`
+	Claimed  string     `json:"claimed,omitempty"` // an agent says it's done (who): waiting for the user
+	Open     int        `json:"open"`
+	Done     int        `json:"done"`
+	Move     string     `json:"move"` // you | agent | waiting | blocked | ready | none
+	MoveNote string     `json:"moveNote,omitempty"`
+	Updated  time.Time  `json:"updated"`
 }
 
 func shortHash(s string) string {
@@ -66,6 +70,13 @@ func (a *App) workItems() []WorkItem {
 	add := func(w WorkItem, defState string) {
 		if t := snap.Tracked[w.Ref]; t != nil && t.State != "" {
 			w.State, w.ParkNote, w.DoneWhen, w.Brief = t.State, t.ParkNote, t.DoneWhen, t.Brief
+			if t.Claim != nil && t.State != "done" {
+				w.Claimed = t.Claim.By
+			}
+			if t.State == "done" {
+				c := t.Closed
+				w.Closed, w.Closeout = &c, t.Closeout
+			}
 		} else {
 			w.State = defState
 			if t != nil {
@@ -111,7 +122,7 @@ func (a *App) workItems() []WorkItem {
 		a.fillMove(&out[i], snap.WorkTasks)
 		out[i].Unshaped = out[i].State == "in-progress" && (len(out[i].DoneWhen) == 0 || out[i].Open+out[i].Done == 0)
 	}
-	rank := map[string]int{"in-progress": 0, "parked": 1, "not-started": 2}
+	rank := map[string]int{"in-progress": 0, "parked": 1, "not-started": 2, "done": 3}
 	sort.SliceStable(out, func(i, j int) bool { return rank[out[i].State] < rank[out[j].State] })
 	return out
 }
@@ -437,6 +448,18 @@ func (a *App) workItemSet(by, project, ref, state, note string, doneWhen *[]stri
 	if state != "" && !contains(itemStates, state) {
 		return desk.Tracked{}, fixErr("state must be one of: %s", strings.Join(itemStates, ", "))
 	}
+	if state == "done" { // only the user; agents claim it (claimDone)
+		if by != "you" {
+			return desk.Tracked{}, deny("only the user can say a work item is done")
+		}
+		if t, err := a.closeWorkItem(w.Ref); err != nil || (doneWhen == nil && brief == nil) {
+			return t, err
+		}
+		state = ""
+	}
+	if w.State == "done" && state != "" {
+		return desk.Tracked{}, fixErr("%q is done. Reopen it first (the user can, from the Done list)", w.Title)
+	}
 	ref = w.Ref
 	t := a.Desk.Track(ref, func(t *desk.Tracked) {
 		if state != "" {
@@ -668,9 +691,10 @@ func (a *App) workTools() []Tool {
 				"due": sprop("YYYY-MM-DD, or '' for none"), "note": sprop("a short note"), "reason": reason,
 			}), run: toolWorkTaskUpdate},
 		{Name: "work_item_set", Label: "Work item state", Kinds: HP,
-			Description: "Start, park or stop tracking a work item in Nexus (the source is never changed), and set its done-when list and brief.",
+			Description: "Start, park or stop tracking a work item in Nexus (the source is never changed), and set its done-when list and brief. state done asks the user to confirm it's done (only they can say so): give evidence, how each done-when check was met.",
 			Parameters: obj([]string{"item", "reason"}, map[string]any{
-				"item": sprop("work item ref"), "state": eprop("in-progress, parked (out of the way until something happens) or not-started", itemStates...),
+				"item": sprop("work item ref"), "state": eprop("in-progress, parked (out of the way until something happens), not-started, or done (asks the user to confirm)", itemStates...),
+				"evidence":  aprop("when state is done: how each done-when check was met, in the same order", sprop("")),
 				"park_note": sprop("when parking: what it waits on, e.g. 'until IT grants access'"), "done_when": aprop("what done looks like, 2-5 short checks", sprop("")),
 				"brief": sprop("what the work is, in 1-3 lines from what the user told you: scope, constraints, who's involved"), "reason": reason,
 			}), run: toolWorkItemSet},
@@ -723,6 +747,9 @@ func toolWorkTaskUpdate(a *App, c *Ctx, m map[string]any) (string, error) {
 func toolWorkItemSet(a *App, c *Ctx, m map[string]any) (string, error) {
 	if err := needReason(m); err != nil {
 		return "", err
+	}
+	if sArg(m, "state") == "done" {
+		return a.claimDone(c.Run, c.Project.ID, sArg(m, "item"), strs(m["evidence"]), sArg(m, "reason"))
 	}
 	t, err := a.workItemSet(agentName(c), c.Project.ID, sArg(m, "item"), sArg(m, "state"), sArg(m, "park_note"), optStrs(m, "done_when"), optStr(m, "brief"), sArg(m, "reason"))
 	if err != nil {

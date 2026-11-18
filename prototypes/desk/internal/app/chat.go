@@ -361,8 +361,12 @@ func (a *App) startTask(id string) error {
 	if a.addonOn(p.ID, "codegraph") {
 		extra = "The code graph is on: prefer code_explore / code_symbol / code_callers over reading files one by one.\n"
 	}
-	msg := fmt.Sprintf("<task id=%q project=%q>\nProject %q. Its folder is the file root %q (read-only for you; nothing you do changes it).\nProject brief: %s\n%s%s\nStart with plan_set. Write your report with report_write, propose wiki updates for anything durable you learned, and end with task_finish.\n</task>",
-		t.ID, p.ID, p.Name, p.ID+"/", oneLine(briefOf(d), 400), a.wikiBootstrap(p.ID), extra)
+	how := "Start with plan_set. Write your report with report_write, propose wiki updates for anything durable you learned, and end with task_finish."
+	if isCloseout(t) {
+		how = "This is a closeout: follow the steps under \"How to close out\" in your brief, in order, and end with task_finish."
+	}
+	msg := fmt.Sprintf("<task id=%q project=%q>\nProject %q. Its folder is the file root %q (read-only for you; nothing you do changes it).\nProject brief: %s\n%s%s\n%s\n</task>",
+		t.ID, p.ID, p.Name, p.ID+"/", oneLine(briefOf(d), 400), a.wikiBootstrap(p.ID), extra, how)
 	go r.Say("Brief: "+t.Title+"\n\n"+t.Brief, msg)
 	return nil
 }

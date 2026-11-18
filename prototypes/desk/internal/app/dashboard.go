@@ -26,6 +26,9 @@ type Need struct {
 	// carry the question and the answers to click).
 	Agent string `json:"agent,omitempty"`
 	Msg   int    `json:"msg,omitempty"`
+	// Done claims: the work item, and each done-when check with evidence.
+	Ref    string      `json:"ref,omitempty"`
+	Checks []NeedCheck `json:"checks,omitempty"`
 }
 
 // Running is one thing in progress.
@@ -95,6 +98,7 @@ func (a *App) needs() []Need {
 	out = append(out, a.workNeeds()...)
 	out = append(out, a.proposalNeeds()...)
 	out = append(out, a.questionNeeds()...)
+	out = append(out, a.claimNeeds()...)
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Time.After(out[j].Time) })
 	return out
 }

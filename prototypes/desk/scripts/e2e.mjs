@@ -166,6 +166,24 @@ await sleep(300);
 ok("shaped: brief, done-when and a task, by title", planItem()?.brief === "One page, for the team." && planItem()?.open === 1 && !planItem()?.unshaped, JSON.stringify(planItem()));
 ok("…and nothing was written into the project", !fs.readFileSync(path.join(scratch, "proj", ".foreman", "backlog.md"), "utf8").includes("outline"));
 
+console.log("done and closeout (only you say it's done)");
+r = await call("p:demo", "work_item_set", { item: "Write the launch plan", state: "done", evidence: ["outline drafted", "team read it"], reason: "e2e: checks met" });
+await sleep(300);
+ok("an agent's done is a claim in needs-you, with its evidence", !r.isError && planItem()?.state === "in-progress" && desk.needs.some((n) => n.source === "done" && n.checks?.[1]?.evidence === "team read it"), r.text);
+send({ t: "workItemDone", item: planItem().ref, space: "" });
+await sleep(500);
+const coID = planItem()?.closeout;
+const closeout = () => (desk.desk.tasks || []).find((t) => t.id === coID);
+ok("your Done closes it (no confirm) and starts a closeout run", planItem()?.state === "done" && !desk.needs.some((n) => n.source === "done") && closeout()?.from?.startsWith("closeout:") && closeout()?.brief?.includes("How to close out"), JSON.stringify(planItem()));
+ok("…its tasks leave the board's live lists", !wi().some((w) => w.state === "in-progress" && w.title === "Write the launch plan"));
+r = await call(`t:${coID}`, "work_propose", { reason: "e2e: what's left", proposals: [{ title: "Present the plan to the board", why: "left over from Write the launch plan" }] });
+await sleep(300);
+ok("the closeout proposes what's left, for the project agent", !r.isError && props().some((q) => q.title === "Present the plan to the board" && q.agent === "p:demo"), r.text);
+send({ t: "workItemReopen", item: planItem().ref, space: "" });
+await sleep(500);
+ok("Undo reopens it as it was; the closeout stops", planItem()?.state === "in-progress" && !planItem()?.closeout && closeout()?.reviewed === true, JSON.stringify(closeout()));
+ok("…and nothing was written into the project", !fs.readFileSync(path.join(scratch, "proj", ".foreman", "backlog.md"), "utf8").includes("board"));
+
 console.log("the customizer (a draft you try before keeping)");
 const nHome = home().length;
 r = await call("customizer", "home_add", { kind: "running", reason: "e2e: show running" });

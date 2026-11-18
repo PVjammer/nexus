@@ -483,7 +483,7 @@ func (a *App) onboardTools() []Tool {
 				}
 				return describeScan(r, a.knownTitles(pid)), nil
 			}},
-		{Name: "work_propose", Label: "Propose work", Kinds: HP,
+		{Name: "work_propose", Label: "Propose work", Kinds: HPT,
 			Description: "Propose work items for a project (leave item out), or tasks toward one work item (item=ref). The user gets a checklist and accepts or dismisses each; you're told what they chose. Group related findings into one work item; 3-8 items, the ones that matter.",
 			Parameters: obj([]string{"proposals", "reason"}, map[string]any{
 				"project":   sprop("project id (default: yours)"),
@@ -518,7 +518,11 @@ func (a *App) onboardTools() []Tool {
 					in = append(in, ProposalIn{Title: sArg(pm, "title"), Why: sArg(pm, "why"), Assignee: sArg(pm, "assignee"), Evidence: strs(pm["evidence"]),
 						Brief: sArg(pm, "brief"), DoneWhen: strs(pm["done_when"]), After: strs(pm["after"])})
 				}
-				out, skipped, err := a.proposeIn(c.Run, c.Run.ID, pid, sArg(m, "item"), in)
+				from := c.Run.ID
+				if c.Kind == KindTask { // a task ends; what the user accepts goes to its project agent
+					from = "p:" + pid
+				}
+				out, skipped, err := a.proposeIn(c.Run, from, pid, sArg(m, "item"), in)
 				if err != nil {
 					return "", err
 				}

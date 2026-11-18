@@ -173,6 +173,17 @@ function needsList(needs: Need[]): HTMLElement[] {
   return out;
 }
 
+/** needTone: what kind of move a need asks of you, for its colour. Your own
+ *  move (a task, a question) is amber; looking at an agent's work purple;
+ *  confirming done green; something that failed red. */
+function needTone(n: Need): string {
+  if (n.source === "done") return "done";
+  if (n.kind === "failed") return "blocked";
+  if (n.kind === "stale") return "none";
+  if (n.source === "proposals" || n.source === "wiki" || n.source === "filing" || (n.source === "task" && n.kind !== "needs-input") || n.kind === "review") return "agent";
+  return "you";
+}
+
 function needCard(n: Need): HTMLElement {
   const p = n.project ? project(n.project) : undefined;
   const acts: HTMLElement[] = [];
@@ -198,6 +209,13 @@ function needCard(n: Need): HTMLElement {
     if (m) answer = questionCard(n.agent, m);
     acts.push(h("button", { onclick: () => openChats(n.agent) }, ic("chat"), " Open the conversation"));
   }
+  if (n.source === "done" && n.ref) {
+    // An agent says it's done; only you can say so. Each check with its evidence.
+    answer = h("ul", { class: "dw claim" }, ...(n.checks || []).map((c) => h("li", {}, c.text ? h("span", {}, c.text) : "", c.evidence ? h("span", { class: "muted small" }, (c.text ? " · " : "") + c.evidence) : h("span", { class: "muted small" }, " · no evidence given"))));
+    acts.push(h("button", { class: "primary", onclick: () => request({ t: "workItemDone", item: n.ref, space: "" }).then(() => toast(`Done: ${n.title}. Closing it out.`, "info", { label: "Undo", run: () => send({ t: "workItemReopen", item: n.ref }) })).catch((e) => toast(e.message, "error")) }, ic("check"), " Yes, it's done"));
+    acts.push(h("button", { onclick: async () => { const why = await promptModal("Not done yet", "What's missing? (optional: the agent is told)"); if (why !== null) send({ t: "workItemNotDone", item: n.ref, reason: why }); } }, "Not yet"));
+    acts.push(h("button", { onclick: () => work.openWorkspace(n.ref!) }, "Open"));
+  }
   if (n.source === "work" && n.task) {
     acts.push(h("button", { class: "primary", onclick: () => work.openTask(n.task!) }, n.kind === "review" ? "Review" : "Open"));
     acts.push(h("button", { onclick: () => request({ t: "workTaskUpdate", id: n.task, status: "done", space: "" }).catch((e) => toast(e.message, "error")) }, ic("check"), " Done"));
@@ -207,8 +225,8 @@ function needCard(n: Need): HTMLElement {
     if (n.report) acts.push(h("button", { class: "primary", onclick: () => openIn(p.id, "review", { path: n.report }) }, ic("doc"), " Report"));
     acts.push(h("button", { onclick: () => send({ t: "taskReviewed", task: n.task }) }, ic("check"), " Done"));
   }
-  const kindTag = n.source === "foreman" ? `foreman · ${n.kind}` : n.source === "task" ? `task agent · ${statusLabel[n.kind || ""] || n.kind}` : n.source === "wiki" ? "wiki proposal" : n.source === "proposals" ? "suggestions" : n.source === "question" ? "question" : n.source === "work" ? (n.detail === "todo" ? "todo" : `task · ${n.kind === "review" ? "review" : "yours"}`) : "capture";
-  return h("div", { class: `card need src-${n.source} k-${n.kind || ""}` },
+  const kindTag = n.source === "foreman" ? `foreman · ${n.kind}` : n.source === "task" ? `task agent · ${statusLabel[n.kind || ""] || n.kind}` : n.source === "wiki" ? "wiki proposal" : n.source === "proposals" ? "suggestions" : n.source === "question" ? "question" : n.source === "done" ? "done? the agent says so" : n.source === "work" ? (n.detail === "todo" ? "todo" : `task · ${n.kind === "review" ? "review" : "yours"}`) : "capture";
+  return h("div", { class: `card need src-${n.source} k-${n.kind || ""} tone-${needTone(n)}` },
     h("div", { class: "card-top" }, h("b", {}, n.title), p ? h("span", { class: "tag" }, p.name) : "", h("span", { class: "muted small grow-r" }, `${kindTag} · ${ago(n.time)}`)),
     n.detail ? h("div", { class: "need-detail" }, n.detail) : "",
     answer,
@@ -268,6 +286,7 @@ function needOpen(n: Need): (() => void) | null {
   const p = n.project ? project(n.project) : undefined;
   if (n.source === "work" && n.task) return () => work.openTask(n.task!);
   if (n.source === "question" && n.agent) return () => openChats(n.agent);
+  if (n.source === "done" && n.ref) return () => work.openWorkspace(n.ref!);
   if (n.source === "task" && p) return () => openIn(p.id, "task", { task: n.task });
   if (n.report && p) return () => openIn(p.id, "review", { path: n.report });
   if (n.source === "wiki" && p) return () => reviewProposal(p.id, n.id.split(":").slice(2).join(":"));
@@ -283,7 +302,7 @@ registerKind("needs", { draw: (c) => {
   const needs = (desk?.needs || []).filter(inScope(c));
   if (c.shape === "compact") {
     const real = needs.filter((n) => n.kind !== "stale");
-    return real.length ? real.map((n) => compactRow(n.title, h("span", {}, tag(n.project), " ", n.kind || n.source), needOpen(n), h("span", { class: `dot k-${n.kind}` }))) : [empty("Nothing is waiting on you.")];
+    return real.length ? real.map((n) => compactRow(n.title, h("span", {}, tag(n.project), " ", n.kind || n.source), needOpen(n), h("span", { class: `dot tone-${needTone(n)}` }))) : [empty("Nothing is waiting on you.")];
   }
   return needsList(needs);
 } });
@@ -420,7 +439,7 @@ function drawRail() {
   const needs = (desk?.needs || []).filter((n) => n.project === p.id);
   // Work items: goals (in your list, or read from a source). Tasks: the next
   // actions toward them. Agent runs: background agents you sent off with a brief.
-  const wis = work.items().filter((w) => w.project === p.id && w.state !== "parked");
+  const wis = work.items().filter((w) => w.project === p.id && w.state !== "parked" && w.state !== "done");
   const wTasks = work.tasks().filter((t) => t.project === p.id && t.item && t.status !== "done" && work.items().find((w) => w.ref === t.item)?.state === "in-progress");
   const notes = openItems.filter((i) => i.kind !== "task");
   const addItem = h("input", { placeholder: "Add a work item…" }) as HTMLInputElement;
@@ -447,9 +466,9 @@ function drawRail() {
       else if (n.source === "question" && n.agent) openChats(n.agent);
       else if (n.task) send({ t: "open", kind: "task", props: { task: n.task } });
       else if (n.report) send({ t: "open", kind: "review", props: { path: n.report } });
-    } }, h("span", { class: `dot k-${n.kind}` }), h("span", { class: "grow" }, h("b", {}, n.title), h("div", { class: "muted small" }, n.detail || "")), h("span", { class: "muted small" }, ago(n.time))))) : null,
+    } }, h("span", { class: `dot tone-${needTone(n)}` }), h("span", { class: "grow" }, h("b", {}, n.title), h("div", { class: "muted small" }, n.detail || "")), h("span", { class: "muted small" }, ago(n.time))))) : null,
     railSec("items", "Work items", wis.length || "", () => [
-      ...wis.map((w) => h("div", { class: "ritem", title: [w.brief, (w.doneWhen || []).length ? "Done when: " + (w.doneWhen || []).join("; ") : ""].filter(Boolean).join("\n") || w.title, onclick: () => work.openWorkspace(w.ref) },
+      ...wis.map((w) => h("div", { class: `ritem tone-${work.itemTone(w)}`, title: [w.brief, (w.doneWhen || []).length ? "Done when: " + (w.doneWhen || []).join("; ") : ""].filter(Boolean).join("\n") || w.title, onclick: () => work.openWorkspace(w.ref) },
         h("span", { class: "grow" }, w.title, w.brief ? h("div", { class: "muted small" }, w.brief) : ""),
         w.state === "in-progress" ? work.moveChip(w)
           : h("button", { class: "mini keep", title: "Put it in progress", onclick: (e: Event) => { e.stopPropagation(); work.startItem(w); } }, "Start"))),
@@ -607,6 +626,7 @@ $("chats-btn").addEventListener("click", () => toggleChats());
 initApps({ openIn, openTasks: () => work.openTasksApp() });
 work.initWork({
   openProject: (pid) => go({ kind: "project", id: pid }),
+  openRun: (pid, task) => openIn(pid, "task", { task }),
   openWorkspace: (ref, task) => {
     if (ref.startsWith("open-report:")) { const path = ref.slice(12); openIn(path.split("/")[0], "review", { path }); return; }
     const w = work.items().find((x) => x.ref === ref);

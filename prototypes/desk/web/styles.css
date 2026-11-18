@@ -680,3 +680,35 @@ body.cz-inspecting .hw * { pointer-events: none; }
   .door, .door-light, .worker, .worker .body::after, .hw.under-construction::before, .hw.under-construction::after, .door-tile .tape, .hw.reveal, #customizer-btn.working { animation: none !important; }
   .worker { display: none; }
 }
+
+/* ---- tone: whose move it is (one palette for cards, rows, dots and chips) ----
+   you: amber, your move · agent: purple, the agent's (or its work to look at)
+   wait: blue, someone else · blocked: red · done: green · shape: needs shaping */
+:root { --tone-you: var(--warn); --tone-agent: var(--agent); --tone-wait: var(--accent); --tone-blocked: var(--danger); --tone-done: var(--ok); --tone-shape: var(--accent); --tone-none: var(--border); }
+.need.tone-you { border-left-color: var(--tone-you); } .need.tone-agent { border-left-color: var(--tone-agent); }
+.need.tone-done { border-left-color: var(--tone-done); } .need.tone-blocked { border-left-color: var(--tone-blocked); } .need.tone-none { border-left-color: var(--muted); }
+.wi-card { border-left: 3px solid var(--tone-none); }
+.wi-card.tone-you { border-left-color: var(--tone-you); } .wi-card.tone-agent { border-left-color: var(--tone-agent); } .wi-card.tone-wait { border-left-color: var(--tone-wait); }
+.wi-card.tone-blocked { border-left-color: var(--tone-blocked); } .wi-card.tone-done { border-left-color: var(--tone-done); } .wi-card.tone-shape { border-left-color: var(--tone-shape); border-left-style: dashed; }
+.trow { box-shadow: inset 3px 0 0 transparent; padding-left: 9px; }
+.trow.tone-you { box-shadow: inset 3px 0 0 var(--tone-you); } .trow.tone-agent { box-shadow: inset 3px 0 0 var(--tone-agent); } .trow.tone-wait { box-shadow: inset 3px 0 0 var(--tone-wait); }
+.trow.tone-blocked { box-shadow: inset 3px 0 0 var(--tone-blocked); } .trow.tone-done { box-shadow: inset 3px 0 0 var(--tone-done); opacity: .75; }
+.dot.tone-you { background: var(--tone-you); } .dot.tone-agent { background: var(--tone-agent); } .dot.tone-done { background: var(--tone-done); }
+.dot.tone-blocked { background: var(--tone-blocked); } .dot.tone-none { background: var(--muted); }
+.ritem.tone-you, .ritem.tone-agent, .ritem.tone-wait, .ritem.tone-blocked, .ritem.tone-shape { box-shadow: inset 3px 0 0 var(--tc); }
+.ritem.tone-you { --tc: var(--tone-you); } .ritem.tone-agent { --tc: var(--tone-agent); } .ritem.tone-wait { --tc: var(--tone-wait); } .ritem.tone-blocked { --tc: var(--tone-blocked); } .ritem.tone-shape { --tc: var(--tone-shape); }
+.wchip.blocked { color: var(--tone-blocked); border-color: var(--tone-blocked); background: var(--danger-weak); border-style: solid; }
+
+/* ---- widget kinds: each kind has its own accent on the top edge and title ---- */
+.hw { --kc: var(--border); border-top: 3px solid var(--kc); }
+.hw.k-needs { --kc: var(--warn); } .hw.k-running, .hw.k-chat { --kc: var(--agent); } .hw.k-board, .hw.k-tasks, .hw.k-todos { --kc: var(--accent); }
+.hw.k-workitems, .hw.k-workstreams { --kc: var(--you); } .hw.k-inbox, .hw.k-capture, .hw.k-items { --kc: var(--muted); } .hw.k-projects { --kc: var(--text); } .hw.k-plugin { --kc: var(--agent-weak); }
+.hw-head > b { color: color-mix(in srgb, var(--kc) 70%, var(--muted)); }
+.home-wrap.solo .hw { border-top: 0; }
+
+/* ---- done ---- */
+.done-list > summary { cursor: pointer; color: var(--muted); font-size: 12px; margin: 10px 0 4px; }
+.done-list .crow { opacity: .85; }
+.done-banner { border-left: 3px solid var(--tone-done); }
+.dw.claim li { margin: 2px 0; }
+.claim-line { color: var(--tone-done); display: flex; align-items: center; gap: 4px; }

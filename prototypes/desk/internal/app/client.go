@@ -249,6 +249,12 @@ func (a *App) handleClient(c *client, m map[string]any, raw []byte) {
 		} else {
 			reply(map[string]any{"t": "ok", "result": v})
 		}
+	case "workItemDone", "workItemReopen", "workItemNotDone":
+		if v, err := a.handleDone(t, m); err != nil {
+			fail(err)
+		} else {
+			reply(map[string]any{"t": "ok", "result": v})
+		}
 	case "customizerKeep", "customizerRollback":
 		if err := a.handleCustomizer(t, m); err != nil {
 			fail(err)

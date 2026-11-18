@@ -103,8 +103,26 @@ type Tracked struct {
 	DoneWhen []string `json:"doneWhen,omitempty"`
 	// Brief is what the work is, in a few lines: what the user said when the
 	// agent asked (scope, constraints, who's involved). Shaping fills it.
-	Brief   string    `json:"brief,omitempty"`
-	Updated time.Time `json:"updated"`
+	Brief string `json:"brief,omitempty"`
+	// Done: the user said so (pressing Done, or confirming an agent's
+	// claim). Closed is when; PrevState is what Undo goes back to; Closeout
+	// is the task that wraps it up (report, what's left, loose ends).
+	Closed    time.Time `json:"closed,omitempty"`
+	PrevState string    `json:"prevState,omitempty"`
+	Closeout  string    `json:"closeout,omitempty"`
+	// Claim: an agent thinks it's done. Only the user can say so.
+	Claim   *DoneClaim `json:"claim,omitempty"`
+	Updated time.Time  `json:"updated"`
+}
+
+// DoneClaim is an agent saying a work item is done, with how each done-when
+// check was met. It waits in Needs you until the user confirms or says not yet.
+type DoneClaim struct {
+	Agent    string    `json:"agent"` // run id, told the answer
+	By       string    `json:"by"`    // its label, for the user
+	Note     string    `json:"note,omitempty"`
+	Evidence []string  `json:"evidence,omitempty"` // one per done-when check, in order
+	At       time.Time `json:"at"`
 }
 
 // WorkProposal is something an agent suggests and the user accepts or

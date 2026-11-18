@@ -200,7 +200,7 @@ function editingInside(el: HTMLElement) {
 
 function title(w: LayoutWidget, info?: WidgetKind): string {
   if (w.kind === "chat") return hooks.agentName(w.scope || "home");
-  if (w.kind === "plugin") return app?.plugins.find((p) => p.id === w.plugin)?.name || w.plugin || "Plugin";
+  if (w.kind === "plugin") return (app?.plugins || []).find((p) => p.id === w.plugin)?.name || w.plugin || "Plugin";
   return info?.label || w.kind;
 }
 
@@ -367,10 +367,10 @@ registerKind("plugin", {
   create: (c) => {
     const holder = h("div", { class: "widget-frame" });
     const m = mountPlugin(holder, "widget:" + c.w.id, c.w.plugin || "");
-    let hash = app?.plugins.find((p) => p.id === c.w.plugin)?.hash || "";
+    let hash = (app?.plugins || []).find((p) => p.id === c.w.plugin)?.hash || "";
     return {
       el: holder,
-      update: () => { const pl = app?.plugins.find((p) => p.id === c.w.plugin); if (pl && pl.hash !== hash) { hash = pl.hash; m.load(); } },
+      update: () => { const pl = (app?.plugins || []).find((p) => p.id === c.w.plugin); if (pl && pl.hash !== hash) { hash = pl.hash; m.load(); } },
       destroy: () => m.destroy(),
     };
   },

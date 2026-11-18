@@ -640,7 +640,7 @@ export function mountPlugin(holder: HTMLElement, key: string, pid: string) {
   let fr: HTMLIFrameElement | null = null;
   let hash = "";
   const load = async (force = false) => {
-    const pl = app?.plugins.find((x) => x.id === pid);
+    const pl = (app?.plugins || []).find((x) => x.id === pid);
     if (!pl || (!force && pl.hash === hash)) return;
     hash = pl.hash;
     try {
@@ -657,7 +657,7 @@ export function mountPlugin(holder: HTMLElement, key: string, pid: string) {
 }
 
 export function pluginControls(pid: string): HTMLElement[] {
-  const pl = app?.plugins.find((x) => x.id === pid);
+  const pl = (app?.plugins || []).find((x) => x.id === pid);
   if (!pl) return [h("span", { class: "muted" }, "Plugin removed")];
   return [
     pl.kept ? h("span", { class: "ok small", title: "Kept: survives restarts" }, "✓ kept")
@@ -682,7 +682,7 @@ function pluginPane(p: Pane): PaneView {
   let fr: HTMLIFrameElement | null = null;
   let hash = "";
   const drawHead = () => {
-    const pl = app?.plugins.find((x) => x.id === pid);
+    const pl = (app?.plugins || []).find((x) => x.id === pid);
     if (!pl) { f.tools.replaceChildren(h("span", { class: "muted" }, "Plugin removed")); return; }
     f.tools.replaceChildren(
       h("b", {}, pl.name), h("span", { class: "muted small" }, `v${pl.version}`),
@@ -702,7 +702,7 @@ function pluginPane(p: Pane): PaneView {
     );
   };
   const load = async () => {
-    const pl = app?.plugins.find((x) => x.id === pid);
+    const pl = (app?.plugins || []).find((x) => x.id === pid);
     if (!pl || pl.hash === hash) return;
     hash = pl.hash;
     try {
