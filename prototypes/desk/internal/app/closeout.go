@@ -53,6 +53,9 @@ func (a *App) closeWorkItem(ref string) (desk.Tracked, error) {
 		t = a.Desk.Track(w.Ref, func(t *desk.Tracked) { t.Closeout = id })
 	}
 	a.workChanged("you", "marked done", w.Title, "")
+	if r := a.existingRun(workstreamID(w.Ref)); r != nil { // its workstream closes; the conversation is kept
+		r.Close()
+	}
 	if claim != nil {
 		a.tellAgent(claim.Agent, fmt.Sprintf("The user confirmed %q is done. Nexus is closing it out (report, what's left, loose ends); nothing more for you to do on it.", w.Title))
 	}
@@ -208,6 +211,9 @@ func (a *App) closeoutBrief(w WorkItem) string {
 	}
 	if w.Report != "" {
 		fmt.Fprintf(&b, "**Its earlier report:** %s\n\n", w.Report)
+	}
+	if n := len(a.chatOf(workstreamID(w.Ref))); n > 0 {
+		fmt.Fprintf(&b, "**Its workstream conversation:** %d messages. Read it with ws_transcript item=%q (query \"decid\" finds decisions).\n\n", n, w.Ref)
 	}
 	b.WriteString("**Loose ends in the repo** (found by Nexus, which never changes the repo):\n")
 	b.WriteString(a.looseEnds(w.Project))

@@ -24,17 +24,60 @@ const isFirstRun = () => !!desk && projects().length === 0;
 // ---------------- chats ----------------
 
 const projChat = new ChatPanel("project-chat");
-$("project-chat-slot").append(projChat.el);
+// The project screen talks to the project agent (the orchestrator) or to one
+// workstream: every work item in progress has its own agent and conversation.
+const wsBar = h("div", { class: "ws-bar" });
+$("project-chat-slot").append(h("div", { class: "chat-col" }, wsBar, projChat.el));
+const chatFor = new Map<string, string>(); // project -> the agent its chat shows
+const workstreams = (pid: string) => work.items().filter((w) => w.project === pid && w.state === "in-progress");
+function chatAgent(pid: string): string {
+  const a = chatFor.get(pid) || "";
+  return a.startsWith("w:") && workstreams(pid).some((w) => "w:" + w.ref === a) ? a : "p:" + pid;
+}
+/** openWorkstream shows a work item's own conversation in the project chat. */
+function openWorkstream(ref: string) {
+  const w = work.items().find((x) => x.ref === ref);
+  if (!w) return;
+  chatFor.set(w.project, w.state === "in-progress" ? "w:" + ref : "p:" + w.project);
+  bindChats();
+}
+
+function drawWsBar(pid: string) {
+  const cur = chatAgent(pid);
+  const ws = workstreams(pid);
+  const chip = (agent: string, label: string, tone: string, title: string) => h("button", {
+    class: `ws-chip${agent === cur ? " on" : ""}`, title,
+    onclick: () => { if (agent.startsWith("w:")) work.openWorkspace(agent.slice(2)); else { chatFor.set(pid, agent); bindChats(); } },
+  }, h("span", { class: `dot tone-${tone}` }), isBusy(agent) ? h("span", { class: "busy-dot" }) : "", label);
+  wsBar.replaceChildren(
+    chip("p:" + pid, "Project", "none", "The project agent: it sees every workstream and can work on any of them"),
+    ...ws.map((w) => chip("w:" + w.ref, w.title, work.itemTone(w), `${w.title}: its own agent and conversation · ${w.moveNote || w.move}`)));
+  wsBar.hidden = !ws.length;
+}
 
 function bindChats() {
   const p = project();
-  if (p) {
+  if (!p) return;
+  const agent = chatAgent(p.id);
+  drawWsBar(p.id);
+  if (agent.startsWith("w:")) {
+    const w = work.items().find((x) => "w:" + x.ref === agent)!;
+    projChat.bind(agent, {
+      placeholder: `Work on ${w.title} with its agent…`,
+      empty: () => h("div", { class: "msg system chat-empty" },
+        `This is ${w.title}'s own conversation. Its agent works on this one work item: its brief, what done looks like and its tasks. The project agent can read it and message it; nothing here fills up the project chat.`),
+      context: () => ({ selection: currentSelection() }),
+      ctxLine: () => ctxLine(),
+    });
+    return;
+  }
+  {
     projChat.bind("p:" + p.id, {
       placeholder: `Work with the ${p.name} agent…`,
       empty: () => {
         const fresh = !work.items().some((w) => w.project === p.id);
         return h("div", { class: "msg system chat-empty" },
-          `I'm the ${p.name} project agent. I can read this project, open and arrange panes, draft docs and sheets, and draft tasks for background agents. Your folder is read-only to me.`,
+          `I'm the ${p.name} project agent. I can read this project, open and arrange panes, draft docs and sheets, and set up and shape its work. Each work item in progress also has its own agent and conversation (above); I see them all and can work on any. Your folder is read-only to me.`,
           fresh ? h("div", { class: "setup-card" },
             h("b", {}, "Set up this project"),
             h("div", { class: "small" }, "I'll look through it for work (branches, checklists, plans, TODOs, design docs) and suggest a few work items for you to tick. Then I'll ask what else you want to do, and which you're working on now."),
@@ -310,9 +353,11 @@ registerKind("needs", { draw: (c) => {
 registerKind("running", { draw: (c) => {
   const run = (desk?.running || []).filter(inScope(c));
   if (!run.length) return [empty("No agents working right now.")];
-  if (c.shape === "compact") return run.map((r) => compactRow(r.title, h("span", {}, tag(r.project), " ", r.source === "foreman" ? "foreman" : "task agent"), r.task ? () => openIn(r.project!, "task", { task: r.task }) : null, h("span", { class: "busy-dot" })));
+  const runLabel = (r: any) => r.source === "foreman" ? "foreman" : r.source === "workstream" ? "workstream" : "task agent";
+  const runOpen = (r: any) => r.task ? () => openIn(r.project!, "task", { task: r.task }) : r.source === "workstream" && r.agent ? () => { go({ kind: "project", id: r.project }); openWorkstream(r.agent.slice(2)); } : null;
+  if (c.shape === "compact") return run.map((r) => compactRow(r.title, h("span", {}, tag(r.project), " ", runLabel(r)), runOpen(r), h("span", { class: "busy-dot" })));
   return run.map((r) => h("div", { class: "card run" },
-    h("div", { class: "card-top" }, h("span", { class: "busy-dot" }), h("b", {}, r.title), tag(r.project), h("span", { class: "muted small grow-r" }, r.source === "foreman" ? "foreman" : "task agent")),
+    h("div", { class: "card-top" }, h("span", { class: "busy-dot" }), h("b", {}, r.title), tag(r.project), h("span", { class: "muted small grow-r" }, runLabel(r))),
     r.detail ? h("div", { class: "muted small" }, r.detail) : "",
     r.task ? h("div", { class: "row" }, h("button", { onclick: () => openIn(r.project!, "task", { task: r.task }) }, "Follow along")) : ""));
 } });
@@ -633,7 +678,9 @@ work.initWork({
     const p = w && project(w.project);
     if (!w || !p) { toast("That work item isn't in a project Nexus knows", "warn"); return; }
     openIn(p.id, "workitem", { ref, task: task || "" }, w.title);
+    openWorkstream(ref);
   },
+  openWorkstream: (ref) => { const w = work.items().find((x) => x.ref === ref); if (w && (view.kind !== "project" || view.id !== w.project)) go({ kind: "project", id: w.project }); openWorkstream(ref); },
 });
 $("apps-slot").append(appsButton());
 initCustomizer({
@@ -706,7 +753,7 @@ function draw() {
 
 on("state", () => { render(); drawTop(); projChat.drawCtx(); if (view.kind === "home") drawHome(); });
 on("desk", () => draw());
-on("busy", () => drawTop());
+on("busy", () => { drawTop(); if (view.kind === "project" && project()) drawWsBar(project()!.id); });
 on("disconnected", () => toast("Lost connection to the core; reconnecting…", "warn"));
 on("turnEnd", () => position());
 on("pluginChanged", () => { if (view.kind === "home") drawHome(); });
@@ -724,6 +771,7 @@ if (hashArgs.has("home")) on("desk", function once() { if (!(window as any)._hom
 if (hashArgs.has("eitri")) on("desk", () => { if (!(window as any)._czOpened) { (window as any)._czOpened = true; toggleCustomizer(true); } });
 if (hashArgs.has("customize")) on("desk", function once() { startEditing(); drawHome(); });
 if (hashArgs.has("project")) on("desk", () => { if (!(window as any)._projOpened && project(hashArgs.get("project")!)) { (window as any)._projOpened = true; go({ kind: "project", id: hashArgs.get("project")! }); } });
+if (hashArgs.has("ws")) on("desk", () => { if (!(window as any)._wsOpened && work.items().some((w) => w.ref === hashArgs.get("ws"))) { (window as any)._wsOpened = true; const w = work.items().find((x) => x.ref === hashArgs.get("ws"))!; go({ kind: "project", id: w.project }); openWorkstream(w.ref); } });
 if (hashArgs.has("tasks")) on("desk", () => { if (!(window as any)._tasksOpened) { (window as any)._tasksOpened = true; work.openTasksApp(hashArgs.get("tasks") || undefined); } });
 if (hashArgs.has("task")) on("desk", () => { if (!(window as any)._taskOpened) { (window as any)._taskOpened = true; work.openTask(hashArgs.get("task")!); } });
 if (hashArgs.has("chats")) on("desk", () => { if (!(window as any)._chatsOpened) { (window as any)._chatsOpened = true; openChats(hashArgs.get("chats") || undefined); } });

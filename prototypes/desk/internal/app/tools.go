@@ -264,7 +264,7 @@ func (a *App) tools() []Tool {
 }
 
 func (a *App) allTools() []Tool {
-	return append(append(append(append(append(a.tools(), a.wikiTools()...), a.codeTools()...), a.homeTools()...), a.workTools()...), a.onboardTools()...)
+	return append(append(append(append(append(append(a.tools(), a.wikiTools()...), a.codeTools()...), a.homeTools()...), a.workTools()...), a.onboardTools()...), a.workstreamTools()...)
 }
 
 // toolsFor is the tool set of one agent: by its kind, plus add-on tools
@@ -276,7 +276,7 @@ func (a *App) toolsFor(r *Run) []Tool {
 			continue
 		}
 		for _, k := range t.Kinds {
-			if k == r.Kind {
+			if k == toolKind(r.Kind) {
 				out = append(out, t)
 				break
 			}
@@ -298,7 +298,7 @@ func (a *App) toolByName(name string) (Tool, bool) {
 }
 
 func (a *App) ctxFor(r *Run) *Ctx {
-	c := &Ctx{Run: r, Kind: r.Kind, Actor: r.label()}
+	c := &Ctx{Run: r, Kind: toolKind(r.Kind), Actor: r.label()}
 	if p, ok := a.Projects.Get(r.Project); ok {
 		c.Project, c.Space = p, p.Space
 	}

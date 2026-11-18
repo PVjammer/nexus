@@ -61,7 +61,7 @@ func (f piFactory) Start(ctx context.Context, s app.RunSpec) (agent.Backend, err
 	safe := strings.NewReplacer(":", "-", "/", "-").Replace(s.ID)
 	sessDir := filepath.Join(f.dataDir, "pi-sessions", safe)
 	prior, _ := filepath.Glob(filepath.Join(sessDir, "*.jsonl"))
-	sys, err := composeInstructions(f.dataDir, safe, filepath.Join(f.piDir, s.Kind+".md"), s.Instructions)
+	sys, err := composeInstructions(f.dataDir, safe, promptFile(f.piDir, s.Kind), s.Instructions)
 	if err != nil {
 		return nil, err
 	}
@@ -132,7 +132,7 @@ func (f claudeFactory) Start(ctx context.Context, s app.RunSpec) (agent.Backend,
 	if err := os.MkdirAll(cwd, 0o700); err != nil {
 		return nil, err
 	}
-	sys, err := composeInstructions(f.dataDir, "claude-"+safe, filepath.Join(f.piDir, s.Kind+".md"), claudeNote+"\n\n"+s.Instructions)
+	sys, err := composeInstructions(f.dataDir, "claude-"+safe, promptFile(f.piDir, s.Kind), claudeNote+"\n\n"+s.Instructions)
 	if err != nil {
 		return nil, err
 	}
@@ -179,12 +179,26 @@ func newUUID() string {
 }
 
 // baseKind: the customizer runs with the home agent's loop and model (its
-// own prompt file and tools).
+// own prompt file and tools); workstream agents and readers with the
+// project agent's.
 func baseKind(kind string) string {
-	if kind == app.KindCustomizer {
+	switch kind {
+	case app.KindCustomizer:
 		return app.KindHome
+	case app.KindWorkstream, app.KindAsk:
+		return app.KindProject
 	}
 	return kind
+}
+
+// promptFile is the kind's own prompt, or its base kind's (a workstream
+// agent is a project agent with a workstream preamble in its instructions).
+func promptFile(dir, kind string) string {
+	p := filepath.Join(dir, kind+".md")
+	if _, err := os.Stat(p); err != nil {
+		return filepath.Join(dir, baseKind(kind)+".md")
+	}
+	return p
 }
 
 // mixFactory picks the agent loop per agent kind (home, project, task).

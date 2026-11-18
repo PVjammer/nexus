@@ -62,6 +62,8 @@ type Run struct {
 	Kind    string
 	Project string // project id (project and task agents)
 	Task    string // task id (task agents)
+	Item    string // work item ref (workstream agents)
+	Title   string // the work item's title (workstream agents)
 	Token   string
 
 	a       *App
@@ -87,6 +89,15 @@ type Run struct {
 	draftSent  time.Time // last progress broadcast
 
 	saveT *time.Timer // debounced transcript save
+
+	// mark: what was true when its last turn ended (work and the repo), for
+	// the "since your last turn" note (changes.go).
+	mark *turnMark
+	// queue: messages from other agents (or hand-offs) that wait for this
+	// agent's turn to end; the user can interrupt instead.
+	queue []Queued
+	// waiters are closed when the current turn ends (ws_ask waits on one).
+	waiters []chan struct{}
 }
 
 func newToken() string {
@@ -114,6 +125,14 @@ func (a *App) run(id string) (*Run, error) {
 		if _, ok := a.Projects.Get(r.Project); !ok {
 			return nil, fmt.Errorf("no project %q", r.Project)
 		}
+	case strings.HasPrefix(id, "w:"):
+		w, err := a.checkItemRef(id[2:])
+		if err != nil || w.Ref != id[2:] {
+			return nil, fmt.Errorf("no work item %q", id[2:])
+		}
+		r.Kind, r.Project, r.Item, r.Title = KindWorkstream, w.Project, w.Ref, w.Title
+	case strings.HasPrefix(id, "ask:"):
+		r.Kind = KindAsk
 	case strings.HasPrefix(id, "t:"):
 		t, ok := a.Desk.Task(id[2:])
 		if !ok {
@@ -170,6 +189,10 @@ func (r *Run) label() string {
 		return "project agent (" + r.Project + ")"
 	case KindCustomizer:
 		return CustomizerName
+	case KindWorkstream:
+		return "workstream agent (" + truncate(r.Title, 40) + ")"
+	case KindAsk:
+		return "reader"
 	default:
 		return "task agent (" + r.Task + ")"
 	}
@@ -213,6 +236,9 @@ func (r *Run) add(m ChatMsg) ChatMsg {
 		r.chat = r.chat[len(r.chat)-400:]
 	}
 	r.mu.Unlock()
+	if r.Kind == KindAsk { // a throwaway reader: nobody sees it, nothing is kept
+		return m
+	}
 	r.a.broadcast(map[string]any{"t": "chat", "agent": r.ID, "msg": m})
 	r.persistSoon()
 	return m
@@ -300,6 +326,9 @@ func (r *Run) persistSoon() {
 }
 
 func (r *Run) persist() {
+	if r.Kind == KindAsk {
+		return
+	}
 	r.mu.Lock()
 	f := chatFile{ID: r.ID, Seq: r.seq, Messages: append([]ChatMsg(nil), r.chat...)}
 	r.mu.Unlock()
@@ -321,6 +350,9 @@ func (r *Run) setBusy(b bool) {
 	r.busy = b
 	r.mu.Unlock()
 	r.a.broadcast(map[string]any{"t": "busy", "agent": r.ID, "busy": b})
+	if r.Kind == KindWorkstream { // it shows in Running and in its project's workstream bar
+		go r.a.broadcastDesk()
+	}
 }
 
 func (r *Run) lastAgentText() string {
@@ -470,6 +502,7 @@ func (r *Run) pump() {
 			if r.Kind == KindCustomizer {
 				r.a.customizerSettle()
 			}
+			r.turnEnded()
 		case agent.EventError:
 			r.closeStream()
 			r.add(ChatMsg{Role: "system", Text: ev.Text, Error: true})
@@ -480,6 +513,7 @@ func (r *Run) pump() {
 			if r.Kind == KindCustomizer {
 				r.a.broadcastCustomizer() // the draft stays; Keep or Roll back
 			}
+			r.turnEnded()
 		}
 	}
 }

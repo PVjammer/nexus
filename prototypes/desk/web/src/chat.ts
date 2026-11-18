@@ -1,7 +1,7 @@
 // Chat with an agent. Transcripts are kept per agent ("home", "p:<project>",
 // "t:<task>"); a ChatPanel shows one of them and can be re-bound.
 
-import { h, on, send } from "./core";
+import { desk, h, on, send } from "./core";
 import { md } from "./md";
 import { proposalChecklist } from "./work";
 
@@ -108,7 +108,7 @@ function renderMsg(m: Msg, agent = "", context?: () => { view?: string; selectio
     return el;
   }
   if (m.role === "you") return h("div", { class: "msg you" }, m.text);
-  if (m.role === "app") return h("div", { class: "msg app", title: "Sent by Nexus on your behalf" }, m.text);
+  if (m.role === "app") return h("div", { class: "msg app", title: m.text.startsWith("Message from the ") ? "From another agent, through Nexus" : "Sent by Nexus on your behalf" }, m.text);
   return h("div", { class: `msg system${m.error ? " error" : ""}` }, m.text);
 }
 
@@ -200,6 +200,7 @@ export class ChatPanel {
   private stop: HTMLButtonElement;
   private status: HTMLElement;
   private ctx: HTMLElement;
+  private queue: HTMLElement;
   private agent = "";
   private opts: ChatOpts = {};
   private els = new Map<number, HTMLElement>();
@@ -211,13 +212,14 @@ export class ChatPanel {
     this.stop = h("button", { type: "button", hidden: true, onclick: () => send({ t: "abort", agent: this.agent }) }, "Stop") as HTMLButtonElement;
     this.status = h("span", { class: "agent-name" });
     this.ctx = h("div", { class: "chat-ctx" });
+    this.queue = h("div", { class: "chat-queue" });
     const form = h("form", { class: "chat-form" }, this.input,
       h("div", { class: "chat-actions" }, this.status, this.stop, h("button", { type: "submit", class: "primary" }, "Send")));
     form.addEventListener("submit", (e) => { e.preventDefault(); this.submit(); });
     this.input.addEventListener("keydown", (e) => {
       if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); this.submit(); }
     });
-    this.el = h("div", { class: `chat ${cls}` }, this.log, this.ctx, form);
+    this.el = h("div", { class: `chat ${cls}` }, this.log, this.queue, this.ctx, form);
     listeners.add((agent, kind, m) => {
       if (agent !== this.agent) return;
       if (kind === "reset") this.redraw();
@@ -246,6 +248,20 @@ export class ChatPanel {
     const c = this.opts.ctxLine?.();
     this.ctx.hidden = !c;
     if (c) this.ctx.replaceChildren(c);
+    this.drawQueue();
+  }
+
+  /** Messages from other agents (or hand-offs) waiting for this agent's
+   *  turn to end. You can let it finish, or interrupt. */
+  private drawQueue() {
+    const q: { from: string; text: string }[] = ((desk as any)?.queues || {})[this.agent] || [];
+    this.queue.hidden = !q.length;
+    if (!q.length) return;
+    this.queue.replaceChildren(...q.map((m) => h("div", { class: "cq-item" },
+      h("span", { class: "muted small" }, `Waiting for its turn to end · from the ${m.from === "app" ? "app (a hand-off)" : m.from}`),
+      h("div", { class: "small" }, m.text.length > 180 ? m.text.slice(0, 180) + "…" : m.text))),
+      h("div", { class: "row" }, h("button", { title: "Stop what it's doing so the message goes now", onclick: () => send({ t: "agentInterrupt", agent: this.agent }) }, "Interrupt?"),
+        h("span", { class: "muted small" }, "or let it finish first")));
   }
 
   private drawStatus() {

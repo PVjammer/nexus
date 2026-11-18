@@ -316,11 +316,7 @@ func (a *App) tellAgent(agentID, text string) {
 		for i := 0; i < 1200 && isBusy(r); i++ {
 			time.Sleep(500 * time.Millisecond)
 		}
-		ctx := ""
-		if r.Kind == KindProject {
-			ctx = a.projectContext(r.Project, "")
-		}
-		r.sayAs("app", text, ctx)
+		r.sayAs("app", text, a.contextFor(r, "", ""))
 	}()
 }
 

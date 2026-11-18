@@ -42,7 +42,7 @@ function waitingOn(t: WorkTask) {
 }
 const live = (t: WorkTask) => !t.item || !itemOf(t.item) || itemOf(t.item)!.state === "in-progress";
 
-type Hooks = { openWorkspace: (ref: string, task?: string) => void; openProject: (pid: string) => void; openRun: (pid: string, task: string) => void };
+type Hooks = { openWorkspace: (ref: string, task?: string) => void; openProject: (pid: string) => void; openRun: (pid: string, task: string) => void; openWorkstream: (ref: string) => void };
 let hooks: Hooks;
 export function initWork(h_: Hooks) { hooks = h_; }
 export const openWorkspace = (ref: string, task?: string) => hooks.openWorkspace(ref, task);
@@ -282,7 +282,7 @@ export function taskPanel(t: WorkTask, o: { onClose?: () => void; docked?: boole
     quick.push(h("button", { title: "You do it from here; the agent stops", onclick: () => update(t.id, { assignee: "you", status: "doing" }) }, "Take it"));
     if (t.project) quick.push(h("button", { title: "Draft a brief for a background task agent", onclick: () => { act({ t: "taskNew", project: t.project, title: t.title, from: "work:" + t.id }); toast("Drafted a background task; it's in the project's Tasks to edit and start"); } }, ic("agent"), " Draft for a task agent"));
   }
-  if (t.assignee === "you" && t.status !== "done") quick.push(h("button", { title: "Give it to the agent", onclick: () => update(t.id, { assignee: "agent" }) }, "Hand to the agent"));
+  if (t.assignee === "you" && t.status !== "done") quick.push(h("button", { title: "Its workstream's agent does it now and puts it in review for you", onclick: async () => { if (await act({ t: "handOff", task: t.id }) !== null) toast(`Handed to the agent: ${t.title}. It comes back to you in review.`, "info", { label: "Watch", run: () => t.item ? hooks.openWorkstream(t.item) : t.project && hooks.openProject(t.project) }); } }, "Hand to the agent"));
   if (t.status === "review") quick.push(h("button", { onclick: () => update(t.id, { status: "doing" }) }, "Needs more work"));
   return h("div", { class: `tpanel${o.docked ? " docked" : ""}` },
     h("div", { class: "tp-top" }, projTag(t.project), w ? h("span", { class: "tag" }, w.title) : h("span", { class: "tag" }, "todo"), whoChip(t),
@@ -453,6 +453,7 @@ export function workItemView(ref: string, focus?: string) {
         h("span", { class: "grow-r" }), w.unshaped ? shapeChip() : "", moveChip(w),
         w.unshaped && ts.length ? shapeBtn(w) : "",
         w.report ? h("button", { onclick: () => hooks.openWorkspace("open-report:" + w.report) }, ic("doc"), " Report") : "",
+        w.state === "in-progress" ? h("button", { title: "This work item's own agent and conversation", onclick: () => hooks.openWorkstream(w.ref) }, ic("chat"), " Its agent") : "",
         w.state === "done" ? h("button", { onclick: () => act({ t: "workItemReopen", item: w.ref }) }, "Reopen")
           : w.state === "in-progress" ? h("button", { onclick: async () => { const note = await promptModal(`Park ${w.title}`, "Until… (optional)"); if (note !== null) act({ t: "workItemSet", item: w.ref, state: "parked", parkNote: note || "" }); } }, "Park")
           : h("button", { class: "primary", onclick: () => startItem(w) }, w.state === "parked" ? "Bring back" : "Start"),

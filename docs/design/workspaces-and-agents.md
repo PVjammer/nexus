@@ -117,13 +117,22 @@ Pin                                        conversation id, message id, pinned b
 
 ## Build order
 
-1. **Done and closeout:** the toast with Undo, the agent's claim of done that goes to review, and the closeout skill (archiving only, until workstreams exist). The colour-coding mock goes alongside.
+1. **Done and closeout** *(built 2026-11-18)*: the toast with Undo, the agent's claim of done that goes to review, and the closeout skill. Colour coding was built straight into the app rather than as a separate mock: whose move it is on cards, rows and Needs you, and an accent for each widget kind.
 2. **Workstream workspaces:**
    - the `w:<item>` run and its workspace, opened for every item in progress;
    - the status lines in the orchestrator's prompt;
    - `ws_transcript`, `ws_ask`, and `ws_message` with Interrupt?;
    - "since your last turn", including changes made outside Nexus;
    - the real hand-off.
+
+   *Built 2026-11-18.* It differs from the design in these ways, each a follow-up:
+   - **`ws_ask` uses a reader over the saved conversation,** not a pi `--fork` of the session. It works with either agent loop, but it doesn't see raw tool results beyond what the transcript keeps.
+   - **Closeout runs as its own short task agent** that reads the workstream's conversation with `ws_transcript`, rather than in the workstream agent itself.
+   - **Panes:** a workstream shares the project's panes: its work item pane plus its own chat. A pane layout per workstream is not built yet.
+   - **The change note:** these parts aren't built yet:
+     - attributing changes to a command an agent proposed in the terminal;
+     - the note for folders that aren't git repos;
+     - keeping the turn marks across a restart.
 3. **Episodes, and the quick agent:** home's agent becomes episodic, then the hotkey window shares Eitri's.
 4. **Private projects:**
    - the wall in the core, with a test for each way out;

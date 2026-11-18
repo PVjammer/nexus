@@ -426,6 +426,15 @@ func (a *App) workTaskUpdate(by, project, id string, e TaskEdit) (desk.WorkTask,
 	if err := a.resolveBlockers(&e); err != nil {
 		return cur, err
 	}
+	// An agent finishing a task it was given puts it in review: you say
+	// it's done. (An agent can still tick off your own task when you tell it.)
+	if by != "you" && e.Status != nil && *e.Status == "done" && cur.Assignee == "agent" && (e.Assignee == nil || *e.Assignee == "agent") {
+		rv, you := "review", "you"
+		e.Status = &rv
+		if cur.Reviewer == "" && e.Reviewer == nil {
+			e.Reviewer = &you
+		}
+	}
 	nt, err := a.Desk.UpdateWorkTask(cur.ID, func(t *desk.WorkTask) error { return a.applyTaskEdit(t, e) })
 	if err == nil {
 		what := "changed task"

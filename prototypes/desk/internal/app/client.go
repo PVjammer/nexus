@@ -249,6 +249,16 @@ func (a *App) handleClient(c *client, m map[string]any, raw []byte) {
 		} else {
 			reply(map[string]any{"t": "ok", "result": v})
 		}
+	case "handOff":
+		if v, err := a.handOff(str(m["task"])); err != nil {
+			fail(err)
+		} else {
+			reply(map[string]any{"t": "ok", "result": v})
+		}
+	case "agentInterrupt":
+		if err := a.interrupt(str(m["agent"])); err != nil {
+			fail(err)
+		}
 	case "workItemDone", "workItemReopen", "workItemNotDone":
 		if v, err := a.handleDone(t, m); err != nil {
 			fail(err)
@@ -613,14 +623,7 @@ func (a *App) appPrompt(agentID, text string) {
 	if err != nil {
 		return
 	}
-	ctx := ""
-	switch r.Kind {
-	case KindHome:
-		ctx = a.homeContext("")
-	case KindProject:
-		ctx = a.projectContext(r.Project, "")
-	}
-	r.sayAs("app", text, ctx)
+	r.sayAs("app", text, a.contextFor(r, "", ""))
 }
 
 func defaultTitle(p store.Pane) string {

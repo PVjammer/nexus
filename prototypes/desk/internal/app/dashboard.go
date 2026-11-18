@@ -117,6 +117,11 @@ func (a *App) running() []Running {
 			out = append(out, Running{Source: "task", Project: t.Project, Title: t.Title, Since: t.Updated, Task: t.ID, Agent: "t:" + t.ID})
 		}
 	}
+	for _, r := range a.allRuns() {
+		if r.Kind == KindWorkstream && r.isBusy() {
+			out = append(out, Running{Source: "workstream", Project: r.Project, Title: r.Title, Detail: "workstream agent", Since: time.Now(), Agent: r.ID})
+		}
+	}
 	return out
 }
 
@@ -131,7 +136,7 @@ func (a *App) deskMsg() map[string]any {
 		"t": "desk", "desk": a.Desk.Snapshot(), "projects": a.allDetails(),
 		"needs": a.needs(), "running": a.running(), "wikis": wikis, "addons": addons,
 		"homeKinds": shellCatalog(), "homeUndo": a.homeUndoInfo(), "workItems": a.workItems(), "wipLimit": a.Desk.WipLimit(),
-		"customizer": a.customizerState(),
+		"customizer": a.customizerState(), "queues": a.queues(),
 	}
 }
 

@@ -7,7 +7,7 @@ description: Close out a work item the user marked done. Write its report, propo
 
 The user said this work item is done. Your brief has everything Nexus knows about it: the brief, the done-when checks (with evidence if an agent claimed it), its tasks, its earlier report and the loose ends in the repo. **Don't reopen or redo the work.** You wrap it up so nothing gets lost. Nexus archives the item itself; you never delete anything.
 
-1. **Read only what you need.** If there's an earlier report or a design doc, `file_read` or `review_read` it for the decisions. Skip this step if the brief is enough.
+1. **Read only what you need.** If the brief says the work item has a workstream conversation, search it with `ws_transcript` (a `query` such as "decid" or "chose") for the decisions. If there's an earlier report or a design doc, `file_read` or `review_read` it. Skip this step if the brief is enough.
 2. **Write the report** with `report_write`, short, with these sections:
    - **Done:** what was finished, in 2 to 5 bullets, from the done-when checks and the tasks done.
    - **Decisions:** what was decided along the way, if you know any. Leave the section out if you don't.
@@ -17,6 +17,12 @@ The user said this work item is done. Your brief has everything Nexus knows abou
 4. **Finish** with `task_finish`: status `done`, and a one-sentence summary for the user ("Closed out CSV export: 2 follow-ups suggested, branch export-v1 not merged").
 
 ## Examples
+
+Finding the decisions in the workstream's conversation.
+
+```json
+[{"tool": "ws_transcript", "args": {"item": "Add CSV export", "query": "decid"}}]
+```
 
 Writing the report.
 

@@ -712,3 +712,14 @@ body.cz-inspecting .hw * { pointer-events: none; }
 .done-banner { border-left: 3px solid var(--tone-done); }
 .dw.claim li { margin: 2px 0; }
 .claim-line { color: var(--tone-done); display: flex; align-items: center; gap: 4px; }
+
+/* ---- workstreams: the project chat shows the orchestrator or one workstream ---- */
+.chat-col { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; }
+.ws-bar { display: flex; gap: 4px; flex-wrap: wrap; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+.ws-chip { display: inline-flex; align-items: center; gap: 5px; border-radius: 14px; padding: 2px 9px; font-size: 12px; background: transparent; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ws-chip .dot { margin: 0; }
+.ws-chip.on { background: var(--accent-weak); border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.chat-queue { border-top: 1px dashed var(--agent); background: var(--agent-weak); padding: 6px 10px; display: flex; flex-direction: column; gap: 4px; }
+.chat-queue .row { display: flex; gap: 8px; align-items: center; }
+.wi-cols > div > b { display: block; margin-top: 8px; }
+.wi-cols > div > b:first-child { margin-top: 0; }

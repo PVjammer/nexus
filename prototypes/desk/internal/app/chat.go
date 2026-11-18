@@ -18,23 +18,37 @@ func (a *App) Chat(agentID, text, selection, view string) {
 		a.toast(err.Error(), "error")
 		return
 	}
+	if r.Kind == KindTask {
+		if t, ok := a.Desk.Task(r.Task); ok && t.Status == "needs-input" {
+			a.Desk.UpdateTask(t.ID, func(t *desk.Task) error { t.Status = "running"; return nil })
+		}
+	}
+	r.Say(text, a.contextFor(r, selection, view))
+}
+
+// contextFor is the turn context an agent gets with each message: what the
+// app knows (its project, its work item, the screen) and, for project and
+// workstream agents, what changed since its last turn.
+func (a *App) contextFor(r *Run, selection, view string) string {
 	ctx := ""
 	switch r.Kind {
 	case KindHome:
 		ctx = a.homeContext(view)
 	case KindProject:
 		ctx = a.projectContext(r.Project, selection)
+	case KindWorkstream:
+		ctx = a.projectContext(r.Project, selection) + "\n" + a.workstreamContext(r)
 	case KindCustomizer:
 		ctx = a.customizerContext(view, selection)
 	case KindTask:
 		if t, ok := a.Desk.Task(r.Task); ok {
 			ctx = a.taskContext(t)
-			if t.Status == "needs-input" {
-				a.Desk.UpdateTask(t.ID, func(t *desk.Task) error { t.Status = "running"; return nil })
-			}
 		}
 	}
-	r.Say(text, ctx)
+	if note := a.sinceLastTurn(r, 12); note != "" {
+		ctx = note + "\n" + ctx
+	}
+	return ctx
 }
 
 func ago(t time.Time) string {
@@ -201,6 +215,7 @@ func (a *App) projectContext(pid, selection string) string {
 	if wi := a.describeItems(pid, false); !strings.HasPrefix(wi, "no work items") {
 		b.WriteString("work items in progress (tasks: work_tasks item=<ref>):\n" + wi)
 	}
+	b.WriteString(a.workstreamLines(pid))
 	all, unshaped, pending := 0, []string{}, 0
 	for _, w := range a.workItems() {
 		if w.Project != pid {

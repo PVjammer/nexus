@@ -184,6 +184,25 @@ await sleep(500);
 ok("Undo reopens it as it was; the closeout stops", planItem()?.state === "in-progress" && !planItem()?.closeout && closeout()?.reviewed === true, JSON.stringify(closeout()));
 ok("…and nothing was written into the project", !fs.readFileSync(path.join(scratch, "proj", ".foreman", "backlog.md"), "utf8").includes("board"));
 
+console.log("workstreams (one agent per work item in progress)");
+const lp = planItem();
+r = await call(`w:${lp.ref}`, "work_task_add", { item: lp.ref, title: "Book the review meeting", reason: "e2e: next step" });
+ok("a workstream agent has the project agent's tools", !r.isError, r.text);
+r = await call("p:demo", "ws_transcript", { item: "Write the launch plan" });
+ok("the orchestrator can read a workstream's conversation", !r.isError && r.text.includes("Write the launch plan"), r.text);
+r = await call("p:demo", "ws_message", { item: "Write the launch plan", text: "Use the one-page template." });
+ok("…and message it", !r.isError && /Sent|Queued/.test(r.text), r.text);
+const mine = (desk.desk.workTasks || []).find((t) => t.title === "Book the review meeting");
+send({ t: "workTaskUpdate", id: mine.id, assignee: "you", space: "" });
+await sleep(200);
+send({ t: "handOff", task: mine.id, space: "" });
+await sleep(400);
+const handed = () => (desk.desk.workTasks || []).find((t) => t.id === mine.id);
+ok("Hand to the agent: it's the agent's, in progress", handed()?.assignee === "agent" && handed()?.status === "doing", JSON.stringify(handed()));
+r = await call(`w:${lp.ref}`, "work_task_update", { id: mine.id, status: "done", note: "booked for Tuesday", reason: "e2e: did it" });
+await sleep(300);
+ok("…and when the agent finishes, it's your review", handed()?.status === "review" && desk.needs.some((n) => n.source === "work" && n.kind === "review" && n.task === mine.id), JSON.stringify(handed()));
+
 console.log("the customizer (a draft you try before keeping)");
 const nHome = home().length;
 r = await call("customizer", "home_add", { kind: "running", reason: "e2e: show running" });

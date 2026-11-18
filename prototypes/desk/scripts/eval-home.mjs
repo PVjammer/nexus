@@ -60,6 +60,13 @@ const cases = [
   { name: "shape", agent: "p:demo", start: "prompt", seed: true, say: ['Shape "Add CSV export": ask me what you need to know, then propose the next tasks.', "Orders only, finance needs it by month end. Good enough, break it down."],
     check: (l, b, r, d, tools) => tools.includes("ask_user") && ((csv(d)?.doneWhen || []).length > 0 || !!csv(d)?.brief) && openProps(d).filter((q) => q.item === csv(d)?.ref).length >= 2 && !wt(d).some((t) => t.item === csv(d)?.ref && t.title !== "Pick the export format"),
     why: "it must ask (with answers to click), save what it learned, and propose tasks rather than add them" },
+  // workstreams: the project agent orchestrates; each work item in progress has its own agent
+  { name: "orchestrate-message", agent: "p:demo", start: "prompt", seed: true, say: ["Tell the CSV export workstream that finance wants semicolons as the separator."],
+    check: (l, b, r, d, tools) => tools.includes("ws_message") && wt(d).length === 1, why: "a request for a workstream goes to it with ws_message, not refused or redone" },
+  { name: "orchestrate-ask", agent: "p:demo", start: "prompt", seed: true, say: ["What's the latest on CSV export?"],
+    check: (l, b, r, d, tools) => wt(d).length === 1 && csv(d)?.state === "in-progress" && r.length > 20 && !tools.includes("ws_message"), why: "a question changes nothing; it answers from the workstream's line or reads it" },
+  { name: "ws-claim-done", agent: "ws:csv", start: "prompt", seed: "done-ready", say: ["I checked: orders export from the admin page and finance is happy with the file. We're done with this."],
+    check: (l, b, r, d, tools) => tools.includes("work_item_set") && csv(d)?.state === "in-progress" && !!csv(d)?.claimed, why: "a workstream agent claims done (with evidence); only the user can close it" },
   // the customizer: small changes apply at once, builds wait for Keep
   { name: "eitri-small", agent: "customizer", start: "dashboard", say: ["Make the needs list compact."],
     check: (l, b, r, d) => find(l, "needs")?.shape === "compact" && d.customizer?.state === "idle", why: "a small change goes live when the turn ends" },
@@ -88,7 +95,7 @@ for (const c of cases) {
     const ws = new WebSocket(`ws://${addr}/ws?token=${token}`);
     await new Promise((r, j) => { ws.onopen = r; ws.onerror = j; });
     let desk = null; const msgs = []; let ended = 0;
-    const agent = c.agent || "home";
+    let agent = c.agent || "home";
     ws.onmessage = (e) => {
       const m = JSON.parse(e.data);
       if (m.t === "desk") desk = m;
@@ -106,6 +113,12 @@ for (const c of cases) {
       await sleep(300);
       send({ t: "workTaskAdd", title: "Pick the export format", item: csv(desk)?.ref, space: "" });
     }
+    if (c.seed === "done-ready") {
+      await sleep(300);
+      send({ t: "workItemSet", item: csv(desk)?.ref, doneWhen: ["Orders export from the admin page", "Finance checked a real file"], space: "" });
+      send({ t: "workTaskUpdate", id: wt(desk)[0]?.id, status: "done", space: "" });
+    }
+    if (agent === "ws:csv") { await sleep(300); agent = "w:" + csv(desk)?.ref; }
     await sleep(400);
     const before = JSON.parse(JSON.stringify(desk.desk.layouts.home));
     const point = c.point ? find(before, c.point)?.id || "" : "";
