@@ -130,6 +130,9 @@ func (f claudeFactory) Name() string {
 const claudeNote = "You run inside Nexus through Claude Code. Your tools come from the \"nexus\" MCP server, so their names start with mcp__nexus__ (mcp__nexus__home_add is the home_add these instructions mention). You have no other tools: no shell, no file editing, no web."
 
 func (f claudeFactory) Start(ctx context.Context, s app.RunSpec) (agent.Backend, error) {
+	if s.Private {
+		return nil, fmt.Errorf("this project is private, so its agents run only on a local model, and Claude Code is a remote one. Use the pi loop with a local model for project agents (-agent-project pi)")
+	}
 	safe := strings.NewReplacer(":", "-", "/", "-").Replace(s.ID)
 	dir := filepath.Join(f.dataDir, "claude", safe)
 	cwd := filepath.Join(dir, "cwd") // empty: no project CLAUDE.md or settings to pick up

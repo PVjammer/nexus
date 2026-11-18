@@ -200,3 +200,6 @@ export function ago(iso: string | undefined): string {
   if (d < 172800) return `${Math.floor(d / 3600)}h ago`;
   return `${Math.floor(d / 86400)}d ago`;
 }
+
+/** isPrivate: a private project's work is yours alone; no agent outside it sees it. */
+export const isPrivate = (pid?: string) => !!pid && !!((desk as any)?.desk?.private || {})[pid];

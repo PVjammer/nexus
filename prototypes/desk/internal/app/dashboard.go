@@ -148,11 +148,18 @@ func (a *App) broadcastDesk() {
 
 // projectsSummary is a compact, chartable view of every project (for the
 // home agent and for dashboard widgets).
-func (a *App) projectsSummary() []map[string]any {
+func (a *App) projectsSummary() []map[string]any { return a.projectsSummaryFor("\x00you") }
+
+// projectsSummaryFor is the summary as one caller may see it (an agent's
+// project, "" for home and plugins): private projects are left out.
+func (a *App) projectsSummaryFor(caller string) []map[string]any {
 	snap := a.Desk.Snapshot()
 	var out []map[string]any
 	now := time.Now()
 	for _, d := range a.allDetails() {
+		if caller != "\x00you" && a.walled(caller, d.ID) {
+			continue
+		}
 		active, working, open := 0, 0, 0
 		for _, w := range d.Workstreams {
 			if !w.Closed {

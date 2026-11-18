@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
@@ -71,6 +72,9 @@ type App struct {
 	// from its own goroutine; without this an older snapshot could reach the
 	// shell after a newer one and leave it showing stale state.
 	deskBcast sync.Mutex
+	// priv is the set of private projects, readable without any lock (the
+	// wall is checked inside store callbacks too). private.go.
+	priv atomic.Pointer[map[string]bool]
 
 	detMu   sync.Mutex
 	details map[string]projects.Detail
@@ -157,6 +161,7 @@ func New(cfg Config, v *vault.Vault) (*App, error) {
 	a.refreshDetails()
 	go a.pollProjects()
 	go a.codegraphLoop()
+	a.loadPrivate()
 	return a, nil
 }
 

@@ -574,9 +574,14 @@ func (a *App) describeTasks(filter func(*desk.WorkTask) bool) string {
 }
 
 func (a *App) describeItems(project string, all bool) string {
+	return a.describeItemsFor("\x00you", project, all)
+}
+
+// describeItemsFor leaves out what the caller can't see (private projects).
+func (a *App) describeItemsFor(caller, project string, all bool) string {
 	var b strings.Builder
 	for _, w := range a.workItems() {
-		if project != "" && w.Project != project {
+		if (project != "" && w.Project != project) || (caller != "\x00you" && a.walled(caller, w.Project)) {
 			continue
 		}
 		if !all && w.State != "in-progress" {
@@ -619,7 +624,7 @@ func (a *App) workTools() []Tool {
 				}
 				var b strings.Builder
 				for _, n := range a.needs() {
-					if p != "" && n.Project != p {
+					if (p != "" && n.Project != p) || a.walled(c.Project.ID, n.Project) {
 						continue
 					}
 					what := map[string]string{"foreman": "foreman " + n.Kind, "task": "task agent " + n.Kind, "wiki": "wiki proposal", "filing": "filings to confirm", "work": "task (" + n.Kind + ")"}[n.Source]
@@ -633,9 +638,9 @@ func (a *App) workTools() []Tool {
 					fmt.Fprintf(&b, "- [%s] %s · project %s · %s%s\n", what, oneLine(n.Title+": "+n.Detail, 200), firstNonEmpty(n.Project, "none"), ago(n.Time), extra)
 				}
 				if b.Len() == 0 {
-					return "nothing is waiting on the user\n", nil
+					return "nothing is waiting on the user\n" + a.busyNote(c.Project.ID), nil
 				}
-				return b.String(), nil
+				return b.String() + a.busyNote(c.Project.ID), nil
 			}},
 		{Name: "work_limit", Label: "In-progress limit", Kinds: H,
 			Description: "Set how many work items the user can have in progress before starting another one suggests parking one (0 = never suggest). Only when the user asks.",
@@ -660,7 +665,7 @@ func (a *App) workTools() []Tool {
 				if c.inProject() {
 					p = c.Project.ID
 				}
-				return a.describeItems(p, bArg(m, "all")), nil
+				return a.scrub(c.Project.ID, a.describeItemsFor(c.Project.ID, p, bArg(m, "all"))) + a.busyNote(c.Project.ID), nil
 			}},
 		{Name: "work_tasks", Label: "Tasks", Kinds: HPT,
 			Description: "List tasks: for one work item (item=ref), the ones waiting on the user (needs_me=true), or every open task in a project.",
@@ -681,7 +686,7 @@ func (a *App) workTools() []Tool {
 				nm, done := bArg(m, "needs_me"), bArg(m, "include_done")
 				live := a.liveTaskFn()
 				return a.describeTasks(func(t *desk.WorkTask) bool {
-					return (item == "" || t.Item == item) && (p == "" || t.Project == p) && (done || t.Status != "done") && (!nm || (needsMe(t) && live(t)))
+					return !a.walled(c.Project.ID, t.Project) && (item == "" || t.Item == item) && (p == "" || t.Project == p) && (done || t.Status != "done") && (!nm || (needsMe(t) && live(t)))
 				}), nil
 			}},
 		{Name: "work_task_add", Label: "Add task", Kinds: HP,

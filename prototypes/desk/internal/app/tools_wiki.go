@@ -90,7 +90,7 @@ func toolWikiSearch(a *App, c *Ctx, m map[string]any) (string, error) {
 	q := sArg(m, "query")
 	var targets []string
 	if c.Kind == KindHome && (sArg(m, "project") == "" || sArg(m, "project") == "all") {
-		for _, p := range a.Projects.List() {
+		for _, p := range a.visibleProjects(c.Project.ID) {
 			targets = append(targets, p.ID)
 		}
 	} else {

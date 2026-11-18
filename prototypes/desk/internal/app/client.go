@@ -177,6 +177,10 @@ func (a *App) handleClient(c *client, m map[string]any, raw []byte) {
 		a.Desk.UpdateTask(str(m["task"]), func(t *desk.Task) error { t.Reviewed = true; return nil })
 
 	// ---- add-ons and the wiki ----
+	case "projectPrivate":
+		if err := a.setPrivate(str(m["project"]), m["on"] == true); err != nil {
+			fail(err)
+		}
 	case "addonSet":
 		on, _ := m["on"].(bool)
 		if err := a.setAddon(str(m["project"]), str(m["addon"]), on); err != nil {

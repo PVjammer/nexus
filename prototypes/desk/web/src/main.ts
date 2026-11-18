@@ -1,7 +1,7 @@
 // Shell: top bar, the home dashboard, the project view (rail, panes, chat),
 // capture, notifications and secure cards.
 
-import { ago, app, connect, desk, h, modal, on, project, promptModal, request, send, setView, space, toast, token, view, type Detail, type Need } from "./core";
+import { ago, app, connect, desk, h, isPrivate, modal, on, project, promptModal, request, send, setView, space, toast, token, view, type Detail, type Need } from "./core";
 import { allViews, getView, position, render } from "./layout";
 import { md, statusLabel } from "./panes";
 import { ChatPanel, isBusy, questionCard, transcriptOf } from "./chat";
@@ -123,7 +123,7 @@ function drawTop() {
   nav.replaceChildren(home, ...projects().map((p) => h("button", {
     class: view.kind === "project" && view.id === p.id ? "active" : "", title: p.path,
     onclick: () => go({ kind: "project", id: p.id }),
-  }, p.name, isBusy("p:" + p.id) ? h("span", { class: "busy-dot" }) : "", needsCount(p.id) ? h("span", { class: "count" }, String(needsCount(p.id))) : "")));
+  }, isPrivate(p.id) ? "🔒 " : "", p.name, isBusy("p:" + p.id) ? h("span", { class: "busy-dot" }) : "", needsCount(p.id) ? h("span", { class: "count" }, String(needsCount(p.id))) : "")));
   const run = desk?.running || [];
   $("running").replaceChildren(run.length ? h("span", { class: "running-pill", title: run.map((r) => `${r.title} (${r.project})`).join("\n") }, h("span", { class: "busy-dot" }), ` ${run.length} running`) : "");
   const tb = $("toolbar");
@@ -269,8 +269,8 @@ function needCard(n: Need): HTMLElement {
     acts.push(h("button", { onclick: () => send({ t: "taskReviewed", task: n.task }) }, ic("check"), " Done"));
   }
   const kindTag = n.source === "foreman" ? `foreman · ${n.kind}` : n.source === "task" ? `task agent · ${statusLabel[n.kind || ""] || n.kind}` : n.source === "wiki" ? "wiki proposal" : n.source === "proposals" ? "suggestions" : n.source === "question" ? "question" : n.source === "done" ? "done? the agent says so" : n.source === "work" ? (n.detail === "todo" ? "todo" : `task · ${n.kind === "review" ? "review" : "yours"}`) : "capture";
-  return h("div", { class: `card need src-${n.source} k-${n.kind || ""} tone-${needTone(n)}` },
-    h("div", { class: "card-top" }, h("b", {}, n.title), p ? h("span", { class: "tag" }, p.name) : "", h("span", { class: "muted small grow-r" }, `${kindTag} · ${ago(n.time)}`)),
+  return h("div", { class: `card need src-${n.source} k-${n.kind || ""} tone-${needTone(n)}${isPrivate(n.project) ? " is-private" : ""}` },
+    h("div", { class: "card-top" }, h("b", {}, n.title), p ? tag(p.id) : "", h("span", { class: "muted small grow-r" }, `${kindTag} · ${ago(n.time)}`)),
     n.detail ? h("div", { class: "need-detail" }, n.detail) : "",
     answer,
     acts.length ? h("div", { class: "row" }, ...acts) : "");
@@ -323,7 +323,7 @@ function projectCard(p: Detail): HTMLElement {
 
 const inScope = (c: WidgetCtx) => (x: { project?: string }) => !c.project || x.project === c.project;
 const empty = (t: string) => h("div", { class: "empty-note" }, t);
-const tag = (pid?: string) => pid ? h("span", { class: "tag" }, project(pid)?.name || pid) : "";
+const tag = (pid?: string) => pid ? h("span", { class: `tag${isPrivate(pid) ? " private" : ""}` }, isPrivate(pid) ? "🔒 " : "", project(pid)?.name || pid) : "";
 
 function needOpen(n: Need): (() => void) | null {
   const p = n.project ? project(n.project) : undefined;
@@ -497,7 +497,7 @@ function drawRail() {
 
   rail.replaceChildren(...([
     h("div", { class: "rail-head" },
-      h("h2", {}, p.name),
+      h("h2", {}, isPrivate(p.id) ? h("span", { class: "private-mark", title: "Private: no agent outside this project can see its work, files or chats" }, "🔒 ") : "", p.name),
       h("div", { class: "muted small path", title: p.path }, p.path),
       h("div", { class: "brief", title: "Click to edit", onclick: async () => { const b = await promptModal(`Brief for ${p.name}`, "One or two sentences", p.brief || p.readme || ""); if (b !== null) send({ t: "projectBrief", project: p.id, brief: b }); } },
         p.brief || p.readme || h("span", { class: "muted" }, "No brief yet. Click to write one.")),
@@ -541,7 +541,7 @@ function drawRail() {
     railSec("wiki", "Wiki", wikiCount(p.id), () => wikiRail(p.id), true),
     (p.docs || []).length ? railSec("docs", "Docs", (p.docs || []).length, () => (p.docs || []).map((d) => h("div", { class: "ritem doc", onclick: () => send({ t: "open", kind: "review", props: { path: `${p.id}/${d}` } }) }, ic("doc"), h("span", { class: "grow" }, d))), false) : null,
     railSec("journal", "Journal", "", () => journal(p), false),
-    railSec("addons", "Add-ons", "", () => addonRail(p.id), false),
+    railSec("addons", isPrivate(p.id) ? "🔒 Private · add-ons" : "Privacy and add-ons", "", () => addonRail(p.id), false),
   ].filter(Boolean) as HTMLElement[]));
 }
 
@@ -621,7 +621,10 @@ document.addEventListener("click", (e) => {
 
 function addonRail(pid: string): HTMLElement[] {
   const list = desk?.addons?.[pid] || [];
-  return list.map((ad) => {
+  const priv = h("label", { class: "ritem addon private-switch", title: "Only you see a private project's work. Agents outside it (home, the quick window, Eitri, other projects) only see that it exists, with counts and due days." },
+    h("input", { type: "checkbox", checked: isPrivate(pid), onchange: (e: Event) => send({ t: "projectPrivate", project: pid, on: (e.target as HTMLInputElement).checked }) }),
+    h("span", { class: "grow" }, h("b", {}, "🔒 Private"), h("div", { class: "muted small" }, "Its work, files and chats stay inside it: no agent outside can see them. Its own agents run on your local model only.")));
+  return [priv, ...list.map((ad) => {
     const st = ad.status;
     const stLine = ad.unavailable ? ad.unavailable
       : ad.id === "codegraph" && ad.on ? (st ? (st.syncing ? "indexing…" : st.error ? `error: ${st.error}` : `${st.files} files indexed · ${ago(st.lastSync)}`) : "indexing soon…")
@@ -631,7 +634,7 @@ function addonRail(pid: string): HTMLElement[] {
     return h("label", { class: "ritem addon", title: ad.description }, cb,
       h("span", { class: "grow" }, h("b", {}, ad.name), h("span", { class: "muted small" }, ` · ${ad.kind}`),
         h("div", { class: "muted small" }, ad.description), stLine ? h("div", { class: `small ${st?.error ? "err" : "muted"}` }, stLine) : ""));
-  });
+  })];
 }
 
 let logEntries: any[] = [];

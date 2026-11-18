@@ -37,6 +37,10 @@ type RunSpec struct {
 	// Fresh: start a new model session instead of resuming the last one
 	// (a new episode). The factory keeps the old one on disk.
 	Fresh bool
+	// Private: the agent works inside a private project, so it runs only on
+	// a local model (a remote provider is a way out). Factories that can't
+	// promise that refuse.
+	Private bool
 }
 
 // AgentFactory starts agent loops. pi is the prototype implementation; a
@@ -218,7 +222,7 @@ func (r *Run) ensureStarted() error {
 	if p, ok := r.a.Projects.Get(r.Project); ok {
 		wd = p.Path
 	}
-	be, err := r.a.cfg.Agents.Start(context.Background(), RunSpec{ID: r.ID, Kind: r.Kind, Token: r.Token, WorkDir: wd, Instructions: r.a.instructionsFor(r.Kind), Fresh: r.fresh})
+	be, err := r.a.cfg.Agents.Start(context.Background(), RunSpec{ID: r.ID, Kind: r.Kind, Token: r.Token, WorkDir: wd, Instructions: r.a.instructionsFor(r.Kind), Fresh: r.fresh, Private: r.a.walled("", r.Project)})
 	if err != nil {
 		return err
 	}

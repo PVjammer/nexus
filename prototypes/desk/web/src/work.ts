@@ -3,7 +3,7 @@
 // task), the Tasks app window, the renderers home widgets reuse, and the
 // work-item view that a project workspace opens as a pane.
 
-import { ago, desk, h, modal, on, project, promptModal, request, toast } from "./core";
+import { ago, desk, h, isPrivate, modal, on, project, promptModal, request, toast } from "./core";
 import { ic } from "./icons";
 
 export type WorkTask = {
@@ -113,7 +113,7 @@ function limitSetting(): HTMLElement {
 
 // ---- small pieces ----
 
-const projTag = (pid?: string) => pid ? h("span", { class: "tag" }, project(pid)?.name || pid) : "";
+const projTag = (pid?: string) => pid ? h("span", { class: `tag${isPrivate(pid) ? " private" : ""}`, title: isPrivate(pid) ? "Private: only you see this; agents outside the project don't" : "" }, isPrivate(pid) ? "🔒 " : "", project(pid)?.name || pid) : "";
 /** tone: whose move a task is, as one word the CSS colours (cards, rows,
  *  dots): you (amber), agent (purple), wait (blue), blocked (red), done (green). */
 export function tone(t: WorkTask): string {
@@ -144,7 +144,7 @@ function blockedText(t: WorkTask): string {
 export function taskRow(t: WorkTask, opts: { showItem?: boolean } = {}): HTMLElement {
   const w = itemOf(t.item);
   const sub = t.status === "blocked" && blockedText(t) ? `after ${blockedText(t)}` : opts.showItem !== false ? (w ? w.title : "todo") : (t.note || "");
-  return h("button", { class: `trow tone-${tone(t)}`, onclick: () => openTask(t.id) },
+  return h("button", { class: `trow tone-${tone(t)}${isPrivate(t.project) ? " is-private" : ""}`, onclick: () => openTask(t.id) },
     h("span", { class: "trow-main" }, h("span", { class: "trow-t" }, t.title), h("span", { class: "muted small" }, sub)),
     t.due ? h("span", { class: `due${t.due <= today() ? " late" : ""}` }, dueLabel(t.due)) : "",
     projTag(t.project), whoChip(t));
@@ -317,7 +317,7 @@ export function board(pid?: string, opts: { hideDone?: boolean } = {}): HTMLElem
   return h("div", { class: "tboard" }, ...STATUSES.filter(([s]) => !(opts.hideDone && s === "done")).map(([s, l]) => {
     const col = ts.filter((t) => t.status === s && (s !== "done" || recentDone(t)));
     return h("div", { class: "tcol" }, h("div", { class: "tcol-h" }, l, h("span", { class: "muted small" }, ` ${col.length}`)),
-      ...col.map((t) => h("button", { class: "tcard", onclick: () => openTask(t.id) }, h("span", {}, t.title),
+      ...col.map((t) => h("button", { class: `tcard tone-${tone(t)}${isPrivate(t.project) ? " is-private" : ""}`, onclick: () => openTask(t.id) }, h("span", {}, isPrivate(t.project) && !pid ? "🔒 " : "", t.title),
         h("span", { class: "tcard-m" }, itemOf(t.item) ? h("span", { class: "muted small" }, itemOf(t.item)!.title) : h("span", { class: "muted small" }, "todo"), whoChip(t)))));
   }));
 }
@@ -346,7 +346,7 @@ function nextTask(w: WorkItem) {
 function workItemCard(w: WorkItem): HTMLElement {
   const n = nextTask(w);
   const total = w.open + w.done;
-  return h("div", { class: `card wi-card tone-${itemTone(w)}` },
+  return h("div", { class: `card wi-card tone-${itemTone(w)}${isPrivate(w.project) ? " is-private" : ""}` },
     h("div", { class: "card-top" }, projTag(w.project), h("span", { class: "muted small" }, w.source), h("span", { class: "grow-r" }), moveChip(w)),
     h("b", { class: "wi-title", onclick: () => hooks.openWorkspace(w.ref) }, w.title),
     w.brief ? h("div", { class: "muted small wi-brief" }, w.brief) : "",

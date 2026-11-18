@@ -215,7 +215,10 @@ type State struct {
 	// first. They're yours: a strip at the top of the chat, never sent to
 	// the agent.
 	Pins map[string][]Pin `json:"pins,omitempty"`
-	Seq  int              `json:"seq"`
+	// Private: projects walled off from every agent outside them (by id).
+	// Only the user sets it.
+	Private map[string]bool `json:"private,omitempty"`
+	Seq     int             `json:"seq"`
 }
 
 // Pin is one pinned message: its id in the agent's transcript, and a copy
@@ -745,6 +748,28 @@ func (s *Store) SetWipLimit(n int) {
 	defer s.mu.Unlock()
 	s.st.WipLimit = &n
 	s.commitLocked()
+}
+
+// ---- private projects ----
+
+func (s *Store) SetPrivate(pid string, on bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.st.Private == nil {
+		s.st.Private = map[string]bool{}
+	}
+	if on {
+		s.st.Private[pid] = true
+	} else {
+		delete(s.st.Private, pid)
+	}
+	s.commitLocked()
+}
+
+func (s *Store) IsPrivate(pid string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return pid != "" && s.st.Private[pid]
 }
 
 // ---- pins ----

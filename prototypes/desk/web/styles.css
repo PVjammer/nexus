@@ -752,3 +752,11 @@ details.episode[open] > summary::before { content: "▾ "; }
 .msg.pinned { box-shadow: inset 2px 0 0 var(--warn); }
 .msg.flash { outline: 2px solid var(--warn); outline-offset: 2px; transition: outline-color .6s; }
 .msg.pinnable { padding-right: 20px; }
+
+/* ---- private projects: yours alone ---- */
+:root { --private: #a0522d; --private-weak: rgba(160, 82, 45, .08); }
+@media (prefers-color-scheme: dark) { :root { --private: #e0a074; --private-weak: rgba(224, 160, 116, .08); } }
+.tag.private { color: var(--private); border-color: var(--private); }
+.is-private { background-image: linear-gradient(var(--private-weak), var(--private-weak)); }
+.private-switch b { color: var(--private); }
+.tcard.tone-you { box-shadow: inset 3px 0 0 var(--tone-you); } .tcard.tone-agent { box-shadow: inset 3px 0 0 var(--tone-agent); } .tcard.tone-wait { box-shadow: inset 3px 0 0 var(--tone-wait); } .tcard.tone-blocked { box-shadow: inset 3px 0 0 var(--tone-blocked); }

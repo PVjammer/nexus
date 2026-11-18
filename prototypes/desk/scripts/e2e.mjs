@@ -219,6 +219,20 @@ send({ t: "pin", agent: "home", msg: said?.id, on: false, space: "" });
 await sleep(300);
 ok("…and unpinning removes it", !desk.desk.pins?.home);
 
+console.log("private projects (yours alone)");
+send({ t: "projectPrivate", project: "demo", on: true, space: "" });
+await sleep(300);
+r = await call("home", "work_items", { all: true });
+ok("outside agents don't see a private project's work, only that it exists", !r.text.includes("Write the launch plan") && /private projects: 1/.test(r.text), r.text);
+r = await call("home", "file_read", { path: "demo/README.md" });
+ok("…or its files, as if they weren't there", r.isError && /no such file/.test(r.text), r.text);
+r = await call("p:demo", "work_items", {});
+ok("its own agent still sees everything", r.text.includes("Write the launch plan"), r.text);
+send({ t: "projectPrivate", project: "demo", on: false, space: "" });
+await sleep(300);
+r = await call("home", "work_items", { all: true });
+ok("turning it off opens it again", r.text.includes("Write the launch plan"));
+
 console.log("the customizer (a draft you try before keeping)");
 const nHome = home().length;
 r = await call("customizer", "home_add", { kind: "running", reason: "e2e: show running" });

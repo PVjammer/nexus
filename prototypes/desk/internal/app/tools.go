@@ -292,7 +292,7 @@ func (a *App) toolByName(name string) (Tool, bool) {
 		}
 	}
 	if name == "projects_summary" {
-		return Tool{Name: name, run: func(a *App, _ *Ctx, _ map[string]any) (string, error) { return jsonOut(a.projectsSummary()), nil }}, true
+		return Tool{Name: name, run: func(a *App, _ *Ctx, _ map[string]any) (string, error) { return jsonOut(a.projectsSummaryFor("")), nil }}, true
 	}
 	return Tool{}, false
 }
@@ -334,7 +334,19 @@ func (a *App) CallTool(r *Run, name string, args map[string]any) (string, error)
 	if asked != "" {
 		return "", fixErr("you already asked %q this turn. End your turn now and write nothing more: the user's answer is your next message, and you can ask your next question then", asked)
 	}
-	out, err := t.run(a, c, args)
+	out, err := "", a.guardArgs(r, args) // a private project's things don't exist for outsiders
+	guarded := err != nil                // (its answer only echoes what was asked)
+	if err == nil {
+		out, err = t.run(a, c, args)
+	}
+	if a.anyPrivate() && !guarded {
+		out = a.scrub(runProject(r), out)
+		if err != nil {
+			if m := a.scrub(runProject(r), err.Error()); m != err.Error() {
+				err = fixErr("%s", m)
+			}
+		}
+	}
 	if name == "ask_user" && err == nil {
 		r.mu.Lock()
 		r.asked = oneLine(sArg(args, "question"), 120)
@@ -504,6 +516,9 @@ func (a *App) canRead(c *Ctx, p string) error {
 	if files.LooksSecret(p) {
 		return deny("%s looks like a secret file; agents can't read those. Share secrets through the vault instead.", p)
 	}
+	if a.pathWalled(c.Project.ID, p) {
+		return fixErr("no such file or folder: %s", p)
+	}
 	if c.Kind == KindHome || p == "" {
 		return nil
 	}
@@ -546,24 +561,21 @@ func (a *App) projectArg(c *Ctx, m map[string]any) (projects.Project, error) {
 		return projects.Project{}, deny("you work in project %s", c.Project.ID)
 	}
 	p, ok := a.Projects.Get(id)
-	if !ok {
-		var ids []string
-		for _, p := range a.Projects.List() {
-			ids = append(ids, p.ID)
-		}
-		return p, fmt.Errorf("no project %q (projects: %s)", id, strings.Join(ids, ", "))
+	if !ok || a.walled(c.Project.ID, id) {
+		return projects.Project{}, fmt.Errorf("no project %q (projects: %s)", id, a.visibleIDs(c.Project.ID))
 	}
 	return p, nil
 }
 
 // ---- project tools ----
 
-func toolProjectsList(a *App, _ *Ctx, _ map[string]any) (string, error) {
-	s := a.projectsSummary()
+func toolProjectsList(a *App, c *Ctx, _ map[string]any) (string, error) {
+	s := a.projectsSummaryFor(c.Project.ID)
+	busy := a.busyNote(c.Project.ID)
 	if len(s) == 0 {
-		return "no projects yet", nil
+		return firstNonEmpty(busy, "no projects yet"), nil
 	}
-	return jsonOut(s), nil
+	return jsonOut(s) + "\n" + busy, nil
 }
 
 func toolProjectGet(a *App, c *Ctx, m map[string]any) (string, error) {
@@ -607,18 +619,25 @@ func toolProjectGet(a *App, c *Ctx, m map[string]any) (string, error) {
 	return jsonOut(out), nil
 }
 
-func toolProjectDiscover(a *App, _ *Ctx, m map[string]any) (string, error) {
+func toolProjectDiscover(a *App, cx *Ctx, m map[string]any) (string, error) {
 	roots := a.cfg.ScanRoots
 	if p := sArg(m, "path"); p != "" {
 		roots = []string{p}
 	}
 	cands := projects.Discover(roots, 6, a.cfg.Foreman)
 	have := map[string]string{}
+	walledPath := map[string]bool{}
 	for _, p := range a.Projects.List() {
 		have[p.Path] = p.ID
+		if a.walled(cx.Project.ID, p.ID) {
+			walledPath[p.Path] = true
+		}
 	}
 	var out []map[string]any
 	for _, c := range cands {
+		if walledPath[c.Path] {
+			continue // a private project isn't a candidate either
+		}
 		e := map[string]any{"path": c.Path, "name": c.Name, "foreman": c.Foreman, "git": c.Git, "readme": c.Readme}
 		if id := have[c.Path]; id != "" {
 			e["already_added_as"] = id
@@ -685,6 +704,9 @@ func toolFilesList(a *App, c *Ctx, m map[string]any) (string, error) {
 	}
 	var lines []string
 	for _, e := range ents {
+		if a.pathWalled(c.Project.ID, e.Path) {
+			continue
+		}
 		switch {
 		case e.Dir:
 			lines = append(lines, e.Path+"/")
@@ -739,7 +761,7 @@ func toolSearch(a *App, c *Ctx, m map[string]any) (string, error) {
 	}
 	var targets []projects.Project
 	if c.Kind == KindHome && (sArg(m, "project") == "all" || sArg(m, "project") == "") {
-		targets = a.Projects.List()
+		targets = a.visibleProjects(c.Project.ID)
 	} else {
 		p, err := a.projectArg(c, m)
 		if err != nil {
@@ -839,7 +861,7 @@ func toolTaskList(a *App, c *Ctx, m map[string]any) (string, error) {
 	}
 	var out []map[string]any
 	for _, t := range a.Desk.Snapshot().Tasks {
-		if want != "" && t.Project != want {
+		if (want != "" && t.Project != want) || a.walled(c.Project.ID, t.Project) {
 			continue
 		}
 		out = append(out, map[string]any{"id": t.ID, "project": t.Project, "title": t.Title, "status": t.Status, "summary": t.Summary, "report": t.Report, "reviewed": t.Reviewed})

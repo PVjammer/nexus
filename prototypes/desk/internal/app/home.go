@@ -121,12 +121,8 @@ func (a *App) scopeFor(k WidgetKind, project string) (string, error) {
 	if !k.Scoped {
 		return "", fixErr("a %s widget always shows everything; leave project out", k.Kind)
 	}
-	if _, ok := a.Projects.Get(project); !ok {
-		var ids []string
-		for _, p := range a.Projects.List() {
-			ids = append(ids, p.ID)
-		}
-		return "", fixErr("no project %q. Project ids: %s (or leave project out for everything)", project, strings.Join(ids, ", "))
+	if _, ok := a.Projects.Get(project); !ok || a.walled("", project) {
+		return "", fixErr("no project %q. Project ids: %s (or leave project out for everything)", project, a.visibleIDs(""))
 	}
 	return "p:" + project, nil
 }

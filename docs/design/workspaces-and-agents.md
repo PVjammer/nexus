@@ -134,13 +134,28 @@ Pin                                        conversation id, message id, pinned b
      - the note for folders that aren't git repos;
      - keeping the turn marks across a restart.
 3. **Episodes, and the quick agent:** home's agent becomes episodic, then the hotkey window shares Eitri's.
+
+   *Built 2026-11-18.* Notes on what was built:
+   - **When home's episode ends:** when nothing it raised waits on the user, *and* it called `episode_close` or the user comes back after 20 minutes. The tool result after a change reminds it, which made small models use `episode_close` in the eval.
+   - **Eitri's episode** ends at Keep, at Roll back, or when a small change goes live.
+   - **Not built yet:**
+     - Undo on the quick window's receipt (it lists what was done);
+     - removing mentions of a project from past episodes when it's made private.
 4. **Private projects:**
    - the wall in the core, with a test for each way out;
    - the "busy" view for agents;
    - the lock and colour in widgets.
 
    It can go earlier: it doesn't depend on workstreams.
-5. **Pins** (they're cheap, so they can go earlier).
+
+   *Built 2026-11-18.* How it works:
+   - **The checks:** every tool call checks its arguments, and something private gets the same answer as something that doesn't exist. Tools that list across projects skip private ones and add the "busy" line. As a last line of defence, the core scrubs any line of a tool result or context that still names a private item, task, path or project.
+   - **The test:** `TestPrivateProjectWall` calls every tool of every outside agent with arguments aimed at the private project.
+   - **Remote loops:** a private project's agents refuse a remote loop (Claude Code).
+   - **Not built yet:**
+     - throwaway agents with internet access (there are no web tools yet);
+     - checking that a pi model is really local.
+5. **Pins** (they're cheap, so they can go earlier). *Built 2026-11-18:* they're yours only and are stored in Nexus.
 6. **Threads** (backlog).
 
 Each step ships with its skills, its `TestSkillExamples` examples and eval cases, as for the rest of Nexus.
