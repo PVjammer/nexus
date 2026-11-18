@@ -79,6 +79,7 @@ Work item (in its source; read only)       Tracked (Nexus)                 WorkT
 
 ## Follow-ups
 
+- **Workspaces and agents** (proposed 2026-11-18): project, workstream and home levels; closeout; episodic home and quick agents; pins. See [workspaces and agents](workspaces-and-agents.md). It replaces decision 6's shared chat and the task panel's "Draft for a task agent".
 - **Triggers and suggestions** (on the backlog, 2026-11-17): scheduled checks (deadline in N days, idle for Y days, source watchers like the SEC-431 watcher), callbacks (source changed, task finished), and suggested next actions. They're built from data the user and agent compose, they read and propose only, and each one is visible, pausable and logged.
 - **Project dashboards** with the same widget model, and widgets in workspaces.
 - **Sources:** Jira and GitHub adapters (list, read, watch; writes only as approved, brokered actions).
