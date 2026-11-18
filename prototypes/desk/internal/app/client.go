@@ -255,6 +255,34 @@ func (a *App) handleClient(c *client, m map[string]any, raw []byte) {
 		} else {
 			reply(map[string]any{"t": "ok", "result": v})
 		}
+	case "pin":
+		// Pins are yours: the text is copied from the transcript, and the
+		// agent is never told.
+		id, on := iArg(m, "msg", 0), m["on"] == true
+		var found *ChatMsg
+		for _, x := range a.chatOf(str(m["agent"])) {
+			if x.ID == id {
+				x := x
+				found = &x
+			}
+		}
+		if on && (found == nil || (found.Role != "you" && found.Role != "agent" && found.Role != "app")) {
+			fail(fixErr("only messages can be pinned"))
+			break
+		}
+		p := desk.Pin{Msg: id}
+		if found != nil {
+			p.Role, p.Text = found.Role, truncate(found.Text, 2000)
+		}
+		a.Desk.SetPin(str(m["agent"]), p, on)
+		a.broadcastDesk()
+	case "episodeEnd":
+		r := a.existingRun(str(m["agent"]))
+		if r == nil || !episodic(r.Kind) {
+			fail(fixErr("that conversation can't be started fresh"))
+			break
+		}
+		a.endEpisode(r, str(m["summary"]))
 	case "agentInterrupt":
 		if err := a.interrupt(str(m["agent"])); err != nil {
 			fail(err)

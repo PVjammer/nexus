@@ -346,6 +346,13 @@ func (r *Run) turnEnded() {
 	if r.Kind == KindProject || r.Kind == KindWorkstream {
 		r.a.markTurn(r)
 	}
+	switch {
+	case r.Kind == KindHome:
+		r.a.maybeEndEpisode(r, false)
+	case r.Kind == KindCustomizer && next == nil && r.a.episodePending(r) == "":
+		// a small change went live (or it only answered): that request is settled
+		r.a.endEpisode(r, "")
+	}
 	if next != nil {
 		r.a.broadcastDesk()
 		go r.sayAs("app", messageText(next.From, next.Text), r.a.contextFor(r, "", ""))

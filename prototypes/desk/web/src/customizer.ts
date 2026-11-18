@@ -1,16 +1,32 @@
-// The customizer: a small floating window (Ctrl+. or the hammer button) where
-// you ask for a change to how Nexus looks and then go back to work. Its agent
+// The floating window (Ctrl+. or the hammer button). Two modes:
+//  - Ask (Ctrl+.): the quick agent, which is the home agent opened from
+//    wherever you are, with that screen as its context. It organizes across
+//    projects and never writes into the project's or a workstream's
+//    conversation; what it changes reaches those agents as a "since your last
+//    turn" note. "Continue in …" moves an ask that turned into real work.
+//  - Eitri (the hammer): the customizer. You ask for a change to how Nexus
+//    looks and then go back to work. Its agent
 // builds on a draft; home.ts shows what's under construction, then lets you
 // try the result with Keep and Roll back. Each step the agent takes is one
 // worker trip through the door, so the animation is the agent's real work,
 // and the window lists those steps for anyone who wants the detail.
 
-import { desk, h, on } from "./core";
+import { desk, h, on, send } from "./core";
 import { MiniChat, onChat, transcriptOf, isBusy } from "./chat";
 import { customizer } from "./home";
 import { ic } from "./icons";
+import { openChats } from "./chats";
 
 const AGENT = "customizer";
+const QUICK = "home"; // the quick agent is the home agent, opened from anywhere
+let mode: "ask" | "eitri" = "ask";
+let quick: MiniChat | null = null;
+let askBox: HTMLElement | null = null;
+let shopEls: HTMLElement[] = [];
+let tabs: HTMLElement | null = null;
+type Where = { agent: string; label: string; view: string; selection: string };
+let where: () => Where = () => ({ agent: "", label: "", view: "home", selection: "" });
+let continueIn: (agent: string, text: string) => void = () => {};
 const $ = (id: string) => document.getElementById(id)!;
 const name = () => customizer().name || "Eitri";
 
@@ -26,15 +42,18 @@ let steps: HTMLElement | null = null;
 let targetEl: HTMLElement | null = null;
 let view = () => "home";
 
-export function initCustomizer(o: { view: () => string; goHome: () => void; redraw: () => void }) {
+export function initCustomizer(o: { view: () => string; goHome: () => void; redraw: () => void; where: () => Where; continueIn: (agent: string, text: string) => void }) {
   view = o.view;
+  where = o.where;
+  continueIn = o.continueIn;
   const btn = $("customizer-btn");
   btn.replaceChildren(ic("hammer"), " " + name());
-  btn.addEventListener("click", () => toggle());
+  btn.addEventListener("click", () => toggle(open && mode === "eitri" ? false : true, "eitri"));
   document.addEventListener("keydown", (e) => {
-    if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key === ".") { e.preventDefault(); toggle(); }
+    if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key === ".") { e.preventDefault(); toggle(open && mode === "ask" ? false : true, "ask"); }
     else if (e.key === "Escape" && inspecting) { e.preventDefault(); stopInspect(); }
   });
+  onChat((agent, kind) => { if (agent === QUICK && open && mode === "ask") drawAsk(); void kind; });
   onChat((agent, kind, m) => {
     if (agent !== AGENT) return;
     if (kind === "add" && m?.role === "tool") trip(m.tool || "");
@@ -50,7 +69,8 @@ export function initCustomizer(o: { view: () => string; goHome: () => void; redr
   });
 }
 
-export function toggle(force?: boolean) {
+export function toggle(force?: boolean, m?: "ask" | "eitri") {
+  if (m) mode = m;
   open = force ?? !open;
   if (open) show(); else hide();
 }
@@ -60,9 +80,39 @@ function show() {
   const root = $("customizer-root");
   if (!root.contains(win)) root.append(win!);
   win!.hidden = false;
+  drawMode();
   drawStatus();
-  mini!.draw();
-  setTimeout(() => mini!.focus(), 0);
+  if (mode === "ask") { drawAsk(); setTimeout(() => quick!.focus(), 0); }
+  else { mini!.draw(); setTimeout(() => mini!.focus(), 0); }
+}
+
+function drawMode() {
+  if (!win || !tabs) return;
+  win.classList.toggle("ask", mode === "ask");
+  tabs.querySelectorAll("button").forEach((b) => b.classList.toggle("on", (b as HTMLElement).dataset.mode === mode));
+  for (const el of shopEls) el.hidden = mode === "ask";
+  askBox!.hidden = mode !== "ask";
+}
+
+// ---- Ask: the quick agent ----
+
+function drawAsk() {
+  if (!askBox || !quick) return;
+  quick.draw();
+  const w = where();
+  const msgs = transcriptOf(QUICK);
+  let i = msgs.length - 1;
+  while (i >= 0 && msgs[i].role !== "you") i--;
+  const cur = i >= 0 && !msgs.slice(i).some((m) => m.role === "episode") ? msgs.slice(i) : [];
+  const answer = cur.filter((m) => m.role === "agent").map((m) => m.text).join("\n").trim();
+  const foot = askBox.querySelector(".quick-foot") as HTMLElement;
+  foot.replaceChildren(
+    h("span", { class: "muted small grow" }, w.label ? `Sees: ${w.label}, and your selection. Its conversation stays out of ${w.label}'s.` : "Sees: the home screen."),
+    cur.length && answer && w.agent && !isBusy(QUICK) ? h("button", { class: "small", title: `Send this ask and its answer to ${w.label}'s conversation, and keep going there`, onclick: () => {
+      continueIn(w.agent, `From a quick ask: ${cur[0].text}\n\nThe home agent answered: ${answer.slice(0, 1500)}`);
+      toggle(false);
+    } }, `Continue in ${w.label} →`) : "",
+    cur.length && !isBusy(QUICK) ? h("button", { class: "link small", title: "Save this conversation and start a fresh one", onclick: () => send({ t: "episodeEnd", agent: QUICK }) }, "New conversation") : "");
 }
 
 function hide() {
@@ -71,6 +121,20 @@ function hide() {
 }
 
 function build() {
+  quick = new MiniChat(QUICK, {
+    placeholder: "Ask, or have it organize something: add a task here, tidy this workspace, check another project",
+    chips: () => {
+      const w = where();
+      return [
+        { label: "What needs me?", text: "What needs me right now?" },
+        w.agent.startsWith("w:") ? { label: "Add a task here", text: `Add a task to ${w.label}: ` } : { label: "What's running?", text: "What's running right now?" },
+        { label: "Another project…", text: "In project " },
+      ];
+    },
+    context: () => { const w = where(); return { view: w.view, selection: w.selection }; },
+    onHistory: () => openChats(QUICK),
+  });
+  askBox = h("div", { class: "quick" }, quick.el, h("div", { class: "quick-foot row" }));
   mini = new MiniChat(AGENT, {
     placeholder: "e.g. make the needs list compact",
     chips: () => [
@@ -83,15 +147,17 @@ function build() {
   targetEl = h("div", { class: "cz-target" });
   lane = h("div", { class: "lane" });
   steps = h("div", { class: "cz-steps muted small" });
+  tabs = h("nav", { class: "seg cz-tabs" },
+    h("button", { "data-mode": "ask", title: "Ctrl+. · a quick ask that doesn't add to the conversation you're in", onclick: () => { mode = "ask"; show(); } }, ic("chat"), " Ask"),
+    h("button", { "data-mode": "eitri", title: `${name()}: change how Nexus looks`, onclick: () => { mode = "eitri"; show(); } }, ic("hammer"), " " + name()));
   const head = h("header", { class: "cz-head" },
-    h("span", { class: "cz-anvil" }, ic("hammer")),
-    h("div", {}, h("b", {}, name()), h("div", { class: "muted small" }, "changes how Nexus looks")),
+    tabs,
     h("span", { class: "grow-r" }),
     h("button", { class: "ebtn", title: "Close (work carries on)", onclick: () => toggle(false) }, "✕"));
-  win = h("div", { class: "customizer", role: "dialog", "aria-label": name() },
-    head,
-    h("div", { class: "cz-shop" }, h("div", { class: "door-frame small" }, h("div", { class: "door" }), h("div", { class: "door-light" })), lane),
-    targetEl, mini.el, steps);
+  const shop = h("div", { class: "cz-shop" }, h("div", { class: "door-frame small" }, h("div", { class: "door" }), h("div", { class: "door-light" })), lane);
+  shopEls = [shop, targetEl, mini.el, steps];
+  win = h("div", { class: "customizer", role: "dialog", "aria-label": "Ask, or " + name() },
+    head, askBox, shop, targetEl, mini.el, steps);
   drag(head, win);
 }
 

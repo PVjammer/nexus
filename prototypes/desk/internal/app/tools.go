@@ -264,7 +264,7 @@ func (a *App) tools() []Tool {
 }
 
 func (a *App) allTools() []Tool {
-	return append(append(append(append(append(append(a.tools(), a.wikiTools()...), a.codeTools()...), a.homeTools()...), a.workTools()...), a.onboardTools()...), a.workstreamTools()...)
+	return append(append(append(append(append(append(append(a.tools(), a.wikiTools()...), a.codeTools()...), a.homeTools()...), a.workTools()...), a.onboardTools()...), a.workstreamTools()...), a.episodeTools()...)
 }
 
 // toolsFor is the tool set of one agent: by its kind, plus add-on tools
@@ -304,6 +304,10 @@ func (a *App) ctxFor(r *Run) *Ctx {
 	}
 	return c
 }
+
+// homeChanges are the home agent's tools that carry out a request; after one,
+// it's reminded that a finished request ends the episode (episodes.go).
+var homeChanges = map[string]bool{"work_task_add": true, "work_task_update": true, "work_item_set": true, "work_item_add": true, "item_add": true, "item_update": true, "capture_propose": true}
 
 // CallTool runs a tool for an agent and logs it.
 func (a *App) CallTool(r *Run, name string, args map[string]any) (string, error) {
@@ -351,6 +355,9 @@ func (a *App) CallTool(r *Run, name string, args map[string]any) (string, error)
 		"work_items", "work_tasks", "work_task_add", "work_task_update", "work_item_set", "needs_you", "work_limit": // work_* log through workChanged
 	default:
 		a.Log.Add(e)
+	}
+	if err == nil && r.Kind == KindHome && homeChanges[name] {
+		out += "\n(If that's everything the user asked for, end your turn with episode_close and a one-line summary: the next conversation starts fresh.)"
 	}
 	return out, err
 }

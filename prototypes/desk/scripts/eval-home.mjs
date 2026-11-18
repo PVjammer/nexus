@@ -67,6 +67,11 @@ const cases = [
     check: (l, b, r, d, tools) => wt(d).length === 1 && csv(d)?.state === "in-progress" && r.length > 20 && !tools.includes("ws_message"), why: "a question changes nothing; it answers from the workstream's line or reads it" },
   { name: "ws-claim-done", agent: "ws:csv", start: "prompt", seed: "done-ready", say: ["I checked: orders export from the admin page and finance is happy with the file. We're done with this."],
     check: (l, b, r, d, tools) => tools.includes("work_item_set") && csv(d)?.state === "in-progress" && !!csv(d)?.claimed, why: "a workstream agent claims done (with evidence); only the user can close it" },
+  // the quick window: the home agent asked from inside a workstream; episodes end when settled
+  { name: "quick-here", start: "prompt", seed: true, view: "ws:csv", say: ["Add a task here: book the review with finance."],
+    check: (l, b, r, d) => wt(d).some((t) => t.item === csv(d)?.ref && /review/i.test(t.title)), why: "\"here\" is the workstream the quick window was opened from" },
+  { name: "episode-close", start: "prompt", say: ["Add a todo: buy printer ink."],
+    check: (l, b, r, d, tools) => wt(d).some((t) => !t.item && /ink/i.test(t.title)) && tools.includes("episode_close"), why: "a request done is an episode done: it says so with a summary" },
   // the customizer: small changes apply at once, builds wait for Keep
   { name: "eitri-small", agent: "customizer", start: "dashboard", say: ["Make the needs list compact."],
     check: (l, b, r, d) => find(l, "needs")?.shape === "compact" && d.customizer?.state === "idle", why: "a small change goes live when the turn ends" },
@@ -124,7 +129,7 @@ for (const c of cases) {
     const point = c.point ? find(before, c.point)?.id || "" : "";
     for (const text of c.say) {
       const want = ended + 1;
-      send({ t: "chat", agent, text, view: "home", selection: point });
+      send({ t: "chat", agent, text, view: c.view === "ws:csv" ? "w:" + csv(desk)?.ref : "home", selection: point });
       const until = Date.now() + TURN_TIMEOUT;
       while (ended < want && Date.now() < until) await sleep(250);
       if (ended < want) { res.note = "timed out"; break; }

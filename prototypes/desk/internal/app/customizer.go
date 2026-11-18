@@ -168,6 +168,9 @@ func (a *App) customizerKeep(how string) error {
 	a.broadcast(map[string]any{"t": "homeChanged", "by": "agent", "who": CustomizerName, "what": summary, "why": ""})
 	a.noteCustomizer("Kept: the change is on the home screen.")
 	a.broadcastCustomizer()
+	if r := a.existingRun(customizerID); r != nil {
+		a.endEpisode(r, "Kept: "+summary)
+	}
 	return nil
 }
 
@@ -182,6 +185,9 @@ func (a *App) customizerRollback() error {
 	a.Log.Add(actionlog.Entry{Actor: you, Action: "home: rolled back " + CustomizerName + "'s change"})
 	a.noteCustomizer("Rolled back: the home screen is as it was.")
 	a.broadcastCustomizer()
+	if r := a.existingRun(customizerID); r != nil {
+		a.endEpisode(r, "Rolled back: "+defaultSummary(r.current()))
+	}
 	return nil
 }
 

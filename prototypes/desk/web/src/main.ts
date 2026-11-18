@@ -685,6 +685,19 @@ work.initWork({
 $("apps-slot").append(appsButton());
 initCustomizer({
   view: () => view.kind === "home" ? "home" : `project ${view.kind === "project" ? view.id : ""}`,
+  // where the quick agent is asked from: a workstream, a project, or home
+  where: () => {
+    const p = view.kind === "project" ? project() : undefined;
+    if (!p) return { agent: "", label: "", view: "home", selection: "" };
+    const a = chatAgent(p.id);
+    const w = a.startsWith("w:") ? work.items().find((x) => "w:" + x.ref === a) : undefined;
+    return { agent: a, label: w ? w.title : p.name, view: w ? a : p.id, selection: currentSelection() };
+  },
+  continueIn: (agent, text) => {
+    send({ t: "chat", agent, text, selection: "", view: "" });
+    const p = project();
+    if (p) { chatFor.set(p.id, agent); bindChats(); }
+  },
   goHome: () => { go({ kind: "home" }); toast(`${customizer().name} finished: try it on the home screen`, "info"); },
   redraw: () => { if (view.kind === "home") drawHome(); },
 });
@@ -768,10 +781,11 @@ connect();
 // opens the Chats panel (agents can point you at these too).
 const hashArgs = new URLSearchParams(location.hash.slice(1));
 if (hashArgs.has("home")) on("desk", function once() { if (!(window as any)._homeOpened) { (window as any)._homeOpened = true; go({ kind: "home" }); } });
-if (hashArgs.has("eitri")) on("desk", () => { if (!(window as any)._czOpened) { (window as any)._czOpened = true; toggleCustomizer(true); } });
+if (hashArgs.has("eitri")) on("desk", () => { if (!(window as any)._czOpened) { (window as any)._czOpened = true; toggleCustomizer(true, "eitri"); } });
+if (hashArgs.has("ask")) on("desk", () => { if (!(window as any)._askOpened) { (window as any)._askOpened = true; setTimeout(() => toggleCustomizer(true, "ask"), 200); } });
 if (hashArgs.has("customize")) on("desk", function once() { startEditing(); drawHome(); });
 if (hashArgs.has("project")) on("desk", () => { if (!(window as any)._projOpened && project(hashArgs.get("project")!)) { (window as any)._projOpened = true; go({ kind: "project", id: hashArgs.get("project")! }); } });
-if (hashArgs.has("ws")) on("desk", () => { if (!(window as any)._wsOpened && work.items().some((w) => w.ref === hashArgs.get("ws"))) { (window as any)._wsOpened = true; const w = work.items().find((x) => x.ref === hashArgs.get("ws"))!; go({ kind: "project", id: w.project }); openWorkstream(w.ref); } });
+if (hashArgs.has("ws")) on("desk", () => { if (!(window as any)._wsOpened && work.items().some((w) => w.ref === hashArgs.get("ws"))) { (window as any)._wsOpened = true; const w = work.items().find((x) => x.ref === hashArgs.get("ws"))!; go({ kind: "project", id: w.project }); setTimeout(() => work.openWorkspace(w.ref), 100); } });
 if (hashArgs.has("tasks")) on("desk", () => { if (!(window as any)._tasksOpened) { (window as any)._tasksOpened = true; work.openTasksApp(hashArgs.get("tasks") || undefined); } });
 if (hashArgs.has("task")) on("desk", () => { if (!(window as any)._taskOpened) { (window as any)._taskOpened = true; work.openTask(hashArgs.get("task")!); } });
 if (hashArgs.has("chats")) on("desk", () => { if (!(window as any)._chatsOpened) { (window as any)._chatsOpened = true; openChats(hashArgs.get("chats") || undefined); } });

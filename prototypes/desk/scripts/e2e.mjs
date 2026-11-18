@@ -203,6 +203,22 @@ r = await call(`w:${lp.ref}`, "work_task_update", { id: mine.id, status: "done",
 await sleep(300);
 ok("…and when the agent finishes, it's your review", handed()?.status === "review" && desk.needs.some((n) => n.source === "work" && n.kind === "review" && n.task === mine.id), JSON.stringify(handed()));
 
+console.log("episodes (home and the quick window start fresh when settled)");
+send({ t: "chat", agent: "home", text: "e2e: what needs me?", selection: "", view: "w:" + lp.ref });
+await sleep(400);
+send({ t: "episodeEnd", agent: "home", space: "" });
+await sleep(400);
+ok("New conversation saves the episode and leaves a divider", seen.some((m) => m.t === "chat" && m.agent === "home" && m.msg?.role === "episode") && fs.readdirSync(path.join(dataDir, "episodes", "home")).length === 1);
+
+console.log("pins (yours, never the agent's)");
+const said = seen.find((m) => m.t === "chat" && m.agent === "home" && m.msg?.role === "you")?.msg;
+send({ t: "pin", agent: "home", msg: said?.id, on: true, space: "" });
+await sleep(300);
+ok("pinning keeps the message at the top of the chat", desk.desk.pins?.home?.[0]?.text === said?.text, JSON.stringify(desk.desk.pins));
+send({ t: "pin", agent: "home", msg: said?.id, on: false, space: "" });
+await sleep(300);
+ok("…and unpinning removes it", !desk.desk.pins?.home);
+
 console.log("the customizer (a draft you try before keeping)");
 const nHome = home().length;
 r = await call("customizer", "home_add", { kind: "running", reason: "e2e: show running" });

@@ -107,6 +107,7 @@ function renderMsg(m: Msg, agent = "", context?: () => { view?: string; selectio
     const el = h("div", { class: "msg thinking", title: "Model reasoning (click to expand)", onclick: () => el.classList.toggle("open") }, m.text);
     return el;
   }
+  if (m.role === "episode") return h("div", { class: "episode-div", title: "This conversation ended and was saved. The agent started fresh, with this summary in mind." }, h("span", {}, "Saved · " + m.text));
   if (m.role === "you") return h("div", { class: "msg you" }, m.text);
   if (m.role === "app") return h("div", { class: "msg app", title: m.text.startsWith("Message from the ") ? "From another agent, through Nexus" : "Sent by Nexus on your behalf" }, m.text);
   return h("div", { class: `msg system${m.error ? " error" : ""}` }, m.text);
@@ -172,8 +173,9 @@ export class MiniChat {
     this.chipsEl.replaceChildren(...(this.opts.chips?.() || []).map((c) => h("button", { type: "button", class: "chip", onclick: () => c.run ? c.run() : this.ask(c.text || c.label) }, c.label)));
     const msgs = transcriptOf(this.agent);
     let i = msgs.length - 1;
-    while (i >= 0 && msgs[i].role !== "you") i--; // your last question; prompts Nexus sent on its own stay in the history
-    const last = i >= 0 ? msgs.slice(i) : [];
+    while (i >= 0 && msgs[i].role !== "you" && msgs[i].role !== "episode") i--; // your last question; prompts Nexus sent on its own stay in the history
+    const ended = i >= 0 && msgs[i].role === "episode" ? msgs[i] : null; // a fresh conversation: show what the last one was
+    const last = i >= 0 && !ended ? msgs.slice(i) : [];
     const kids: HTMLElement[] = [];
     const tools: string[] = [];
     for (const m of last) {
@@ -185,7 +187,8 @@ export class MiniChat {
       else if (m.role === "tool") tools.push((m.error ? "⚠ " : "") + (toolLabels[m.tool || ""] || m.tool || "tool"));
       else if (m.role === "system" && m.error) kids.push(h("div", { class: "msg system error" }, m.text));
     }
-    if (tools.length) kids.splice(1, 0, h("div", { class: "mini-tools muted small" }, "Used: " + tools.join(" · ")));
+    if (tools.length) kids.splice(1, 0, h("div", { class: "mini-tools muted small" }, "Did: " + tools.join(" · ")));
+    if (ended) kids.push(h("div", { class: "episode-div" }, h("span", {}, "Saved · " + ended.text)));
     if (isBusy(this.agent)) kids.push(h("div", { class: "muted small" }, h("span", { class: "busy-dot" }), " working…", h("button", { type: "button", class: "link", onclick: () => send({ t: "abort", agent: this.agent }) }, "Stop")));
     const talk = (l: Msg[]) => l.filter((m) => m.role === "you" || m.role === "agent").length;
     if (talk(msgs) > talk(last)) kids.push(h("button", { type: "button", class: "link small", onclick: () => this.opts.onHistory?.() }, `Conversation history (${talk(msgs)} messages)`));
@@ -201,6 +204,7 @@ export class ChatPanel {
   private status: HTMLElement;
   private ctx: HTMLElement;
   private queue: HTMLElement;
+  private pins: HTMLElement;
   private agent = "";
   private opts: ChatOpts = {};
   private els = new Map<number, HTMLElement>();
@@ -213,18 +217,21 @@ export class ChatPanel {
     this.status = h("span", { class: "agent-name" });
     this.ctx = h("div", { class: "chat-ctx" });
     this.queue = h("div", { class: "chat-queue" });
+    this.pins = h("div", { class: "chat-pins" });
     const form = h("form", { class: "chat-form" }, this.input,
       h("div", { class: "chat-actions" }, this.status, this.stop, h("button", { type: "submit", class: "primary" }, "Send")));
     form.addEventListener("submit", (e) => { e.preventDefault(); this.submit(); });
     this.input.addEventListener("keydown", (e) => {
       if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); this.submit(); }
     });
-    this.el = h("div", { class: `chat ${cls}` }, this.log, this.queue, this.ctx, form);
+    this.el = h("div", { class: `chat ${cls}` }, this.pins, this.log, this.queue, this.ctx, form);
+    on("desk", () => { this.drawPins(); this.drawQueue(); });
     listeners.add((agent, kind, m) => {
       if (agent !== this.agent) return;
       if (kind === "reset") this.redraw();
+      else if (kind === "add" && m && m.role === "episode") this.redraw();
       else if (kind === "add" && m) this.append(m);
-      else if (kind === "update" && m) { const el = this.els.get(m.id); if (el) { const n = renderMsg(m, this.agent, this.opts.context); el.replaceWith(n); this.els.set(m.id, n); } }
+      else if (kind === "update" && m) { const el = this.els.get(m.id); if (el) { const n = this.render(m); el.replaceWith(n); this.els.set(m.id, n); } }
       if (kind === "add" && m && (m.role === "you" || m.role === "app")) this.log.querySelectorAll(".qcard:not(.done)").forEach((q) => q.classList.add("done"));
       else if (kind === "delta") this.flush();
       else if (kind === "busy") this.drawStatus();
@@ -237,6 +244,7 @@ export class ChatPanel {
     this.opts = opts;
     this.input.placeholder = opts.placeholder || "Talk to the agent. Enter to send, Shift+Enter for a new line.";
     if (changed) this.redraw();
+    this.drawPins();
     this.drawCtx();
     this.drawStatus();
   }
@@ -249,6 +257,29 @@ export class ChatPanel {
     this.ctx.hidden = !c;
     if (c) this.ctx.replaceChildren(c);
     this.drawQueue();
+  }
+
+  /** Pins are yours: messages you keep in view at the top of the chat so
+   *  you don't have to scroll back. The agent never sees them. */
+  private pinned(): { msg: number; role: string; text: string }[] {
+    return (((desk as any)?.desk?.pins || {})[this.agent] || []) as { msg: number; role: string; text: string }[];
+  }
+  private drawPins() {
+    const ps = this.pinned();
+    this.pins.hidden = !ps.length;
+    const ids = new Set(ps.map((p) => p.msg));
+    this.els.forEach((el, id) => el.classList.toggle("pinned", ids.has(id)));
+    if (!ps.length) { this.pins.replaceChildren(); return; }
+    this.pins.replaceChildren(...ps.map((p) => h("div", { class: `pin pin-${p.role}` },
+      h("span", { class: "pin-ic", title: "Pinned (only you see pins)" }, "📌"),
+      h("button", { class: "pin-t", title: "Show it in the conversation", onclick: () => {
+        const el = this.els.get(p.msg);
+        if (!el) return;
+        el.closest("details")?.setAttribute("open", "");
+        el.scrollIntoView({ block: "center", behavior: "smooth" });
+        el.classList.add("flash"); setTimeout(() => el.classList.remove("flash"), 1200);
+      } }, (p.role === "you" ? "You: " : "") + p.text),
+      h("button", { class: "ebtn", title: "Unpin", onclick: () => send({ t: "pin", agent: this.agent, msg: p.msg, on: false }) }, "✕"))));
   }
 
   /** Messages from other agents (or hand-offs) waiting for this agent's
@@ -289,14 +320,38 @@ export class ChatPanel {
       const e = this.opts.empty();
       this.log.append(typeof e === "string" ? h("div", { class: "msg system" }, e) : e);
     }
-    msgs.forEach((m) => this.append(m, false));
+    // Ended episodes fold behind their summary; the current one is shown.
+    let start = 0;
+    msgs.forEach((m, i) => {
+      if (m.role !== "episode") return;
+      const part = msgs.slice(start, i);
+      start = i + 1;
+      const d = h("details", { class: "episode" }, h("summary", {}, h("span", { class: "muted small" }, `Earlier: ${m.text} · ${part.filter((x) => x.role === "you" || x.role === "agent").length} messages`)));
+      part.forEach((x) => { const el = this.render(x); this.els.set(x.id, el); d.append(el); });
+      this.els.set(m.id, d);
+      this.log.append(d);
+    });
+    msgs.slice(start).forEach((m) => this.append(m, false));
     this.log.scrollTop = this.log.scrollHeight;
+  }
+
+  /** render is renderMsg plus a pin button on what was said. */
+  private render(m: Msg): HTMLElement {
+    const el = renderMsg(m, this.agent, this.opts.context);
+    if ((m.role === "you" || m.role === "agent" || m.role === "app") && m.text.trim()) {
+      const on = () => this.pinned().some((p) => p.msg === m.id);
+      el.classList.add("pinnable");
+      el.classList.toggle("pinned", on());
+      el.append(h("button", { class: "msg-pin", type: "button", title: "Pin it to the top of this chat (only you see pins)",
+        onclick: (e: Event) => { e.stopPropagation(); send({ t: "pin", agent: this.agent, msg: m.id, on: !on() }); } }, "📌"));
+    }
+    return el;
   }
 
   private append(m: Msg, stick = true) {
     if (this.els.size === 0) this.log.querySelector(".chat-empty")?.remove();
     const near = this.log.scrollHeight - this.log.scrollTop - this.log.clientHeight < 80;
-    const el = renderMsg(m, this.agent, this.opts.context);
+    const el = this.render(m);
     this.els.set(m.id, el);
     this.log.append(el);
     if (!stick || near) this.log.scrollTop = this.log.scrollHeight;

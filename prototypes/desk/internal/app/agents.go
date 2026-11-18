@@ -34,6 +34,9 @@ type RunSpec struct {
 	// Instructions is extra system-prompt text for this agent: the skills
 	// for its kind, rendered with text generated from the code.
 	Instructions string
+	// Fresh: start a new model session instead of resuming the last one
+	// (a new episode). The factory keeps the old one on disk.
+	Fresh bool
 }
 
 // AgentFactory starts agent loops. pi is the prototype implementation; a
@@ -98,6 +101,10 @@ type Run struct {
 	queue []Queued
 	// waiters are closed when the current turn ends (ws_ask waits on one).
 	waiters []chan struct{}
+	// wantEnd: the agent said this episode is done (episode_close); fresh:
+	// the next start begins a new model session (episodes.go).
+	wantEnd string
+	fresh   bool
 }
 
 func newToken() string {
@@ -211,10 +218,11 @@ func (r *Run) ensureStarted() error {
 	if p, ok := r.a.Projects.Get(r.Project); ok {
 		wd = p.Path
 	}
-	be, err := r.a.cfg.Agents.Start(context.Background(), RunSpec{ID: r.ID, Kind: r.Kind, Token: r.Token, WorkDir: wd, Instructions: r.a.instructionsFor(r.Kind)})
+	be, err := r.a.cfg.Agents.Start(context.Background(), RunSpec{ID: r.ID, Kind: r.Kind, Token: r.Token, WorkDir: wd, Instructions: r.a.instructionsFor(r.Kind), Fresh: r.fresh})
 	if err != nil {
 		return err
 	}
+	r.fresh = false
 	r.be = be
 	go r.pump()
 	return nil

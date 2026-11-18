@@ -19,6 +19,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/pvjammer/nexus/prototypes/desk/internal/agent"
 	"github.com/pvjammer/nexus/prototypes/desk/internal/app"
@@ -60,6 +61,9 @@ func (f piFactory) Name() string {
 func (f piFactory) Start(ctx context.Context, s app.RunSpec) (agent.Backend, error) {
 	safe := strings.NewReplacer(":", "-", "/", "-").Replace(s.ID)
 	sessDir := filepath.Join(f.dataDir, "pi-sessions", safe)
+	if s.Fresh { // a new episode: keep the old session, start a new one
+		os.Rename(sessDir, sessDir+"-"+time.Now().Format("20060102-150405"))
+	}
 	prior, _ := filepath.Glob(filepath.Join(sessDir, "*.jsonl"))
 	sys, err := composeInstructions(f.dataDir, safe, promptFile(f.piDir, s.Kind), s.Instructions)
 	if err != nil {
@@ -147,6 +151,9 @@ func (f claudeFactory) Start(ctx context.Context, s app.RunSpec) (agent.Backend,
 	}
 	// One conversation per agent, resumed after a restart (like pi's --continue).
 	sessFile := filepath.Join(dir, "session")
+	if s.Fresh { // a new episode: a new conversation (the old one stays in Claude Code's history)
+		os.Remove(sessFile)
+	}
 	sid, resume := "", false
 	if b, err := os.ReadFile(sessFile); err == nil {
 		sid = strings.TrimSpace(string(b))

@@ -211,7 +211,20 @@ type State struct {
 	Proposals []*WorkProposal        `json:"proposals,omitempty"`
 	Onboard   map[string]*Onboarding `json:"onboard,omitempty"` // by project id
 	Dismissed map[string]bool        `json:"dismissed"`         // foreman inbox ids you cleared in Nexus
-	Seq       int                    `json:"seq"`
+	// Pins: messages you pinned in a conversation, by agent id, oldest
+	// first. They're yours: a strip at the top of the chat, never sent to
+	// the agent.
+	Pins map[string][]Pin `json:"pins,omitempty"`
+	Seq  int              `json:"seq"`
+}
+
+// Pin is one pinned message: its id in the agent's transcript, and a copy
+// of its text (the transcript keeps its newest 400 messages).
+type Pin struct {
+	Msg  int       `json:"msg"`
+	Role string    `json:"role"`
+	Text string    `json:"text"`
+	At   time.Time `json:"at"`
 }
 
 type Store struct {
@@ -731,6 +744,33 @@ func (s *Store) SetWipLimit(n int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.st.WipLimit = &n
+	s.commitLocked()
+}
+
+// ---- pins ----
+
+// SetPin pins (on) or unpins a message in an agent's conversation.
+func (s *Store) SetPin(agent string, p Pin, on bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.st.Pins == nil {
+		s.st.Pins = map[string][]Pin{}
+	}
+	var keep []Pin
+	for _, x := range s.st.Pins[agent] {
+		if x.Msg != p.Msg {
+			keep = append(keep, x)
+		}
+	}
+	if on {
+		p.At = time.Now()
+		keep = append(keep, p)
+	}
+	if len(keep) == 0 {
+		delete(s.st.Pins, agent)
+	} else {
+		s.st.Pins[agent] = keep
+	}
 	s.commitLocked()
 }
 
