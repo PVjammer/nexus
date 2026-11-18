@@ -23,10 +23,10 @@ What's wanted: **focus** (what needs me now), **decomposition** (the concrete ne
 11. **Nexus assumes no particular tool.** A new user has a git repo and nothing else. Whatever a project keeps (a backlog file, design notes, reports, another tool's folders) is found by looking, the same way for every project. Integrations such as the foreman ledger are per-project add-ons, off unless switched on (`-foreman` makes them default on).
 12. **Onboarding is a conversation with the project agent, in four steps you can skip or redo:**
     - **scan:** plain code, no model, lists the signs of work with where each one is (unmerged branches, uncommitted changes, unchecked checklists, plan sections, TODO comments, design docs);
-    - **propose:** the agent groups the findings into 3 to 8 work items, which you tick as a checklist; what you dismiss isn't suggested again;
+    - **propose:** the agent groups the findings into 3 to 8 work items, each with a draft brief and done-when from what it read, which you tick as a checklist; what you dismiss isn't suggested again. Proposals from one turn are one checklist;
     - **ask:** what else do you want to do here, and which are you working on now (the in-progress limit applies);
     - **shape:** for each item in progress, up to 3 questions with answers to click, then a brief, a done-when list and 2 to 5 proposed tasks.
-13. **Shaped means:** a brief, a done-when list and at least one task. An in-progress item without them shows **Needs shaping** and a **Shape** button, which starts the same questions-then-tasks conversation.
+13. **Shaped means:** a brief, a done-when list and at least one task. An in-progress item without them shows **Needs shaping** and a **Shape** button, which starts the same questions-then-tasks conversation. Proposed tasks can name what they come **after**; accepted, such a task starts blocked on it and moves to To do when it's done, so Needs you holds only what you can do now. Agents ask **one question per turn** (the core refuses a second), and an unanswered question is in Needs you with its answers.
 14. **The agent proposes; you tick.** Work it found and tasks it suggests arrive as a checklist (in the chat, in Needs you and in Tasks), never straight onto your list. What you name yourself goes straight in.
 15. **The customizer (Eitri) changes how Nexus looks, on a draft.** Ctrl+. or the hammer button opens a small floating window; you ask, point at a widget if you like, and go back to work. While it works, what it's changing is under construction on your screen, and new widgets appear as a door that workers carry things through, one trip per real step. When it's done, small changes (resize, move, reshape, remove) go live with Undo; anything new is shown in place to try, with **Keep** or **Roll back**. The name is one constant.
 
@@ -44,7 +44,7 @@ Work item (in its source; read only)       Tracked (Nexus)                 WorkT
 - **Tracked** also keeps a **brief** (what it is, in the user's words). **Proposals** (`WorkProposal`) are kept per batch: a work item for a project, or a task toward a work item, with why and evidence; open, accepted or dismissed.
 - **Settle:** a blocked task whose blockers are all done moves to To do by itself. A blocked task with no blockers is waiting on something outside Nexus and stays blocked until someone moves it.
 - **Needs you:** your To do or In progress tasks, plus reviews waiting on you, in work items that are in progress (and todos). They join the existing needs-you list, so the top-bar count and every Needs you widget include them.
-- **Relation to desk's older pieces:** desk's `Item` (a project's Nexus list) becomes one work-item source. Desk's `Task` (a dispatched background agent run) stays what it is: an agent task can be turned into one ("Draft for a task agent"). `PlanStep` remains the task agent's own checklist.
+- **Relation to desk's older pieces:** desk's `Item` (a project's Nexus list) becomes one work-item source. Desk's `Task` (a dispatched background agent run) stays what it is, shown as **Agent runs** in the project rail so "task" means one thing on screen: an agent task can be turned into one ("Draft for a task agent"). `PlanStep` remains the task agent's own checklist.
 
 ## What you see
 

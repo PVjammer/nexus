@@ -1,6 +1,8 @@
 package app
 
 import (
+	"encoding/json"
+	"fmt"
 	"sort"
 	"time"
 
@@ -20,6 +22,10 @@ type Need struct {
 	Report  string    `json:"report,omitempty"` // app path to open
 	Task    string    `json:"task,omitempty"`
 	Count   int       `json:"count,omitempty"`
+	// Questions: the agent that asked, and the ask_user message (its args
+	// carry the question and the answers to click).
+	Agent string `json:"agent,omitempty"`
+	Msg   int    `json:"msg,omitempty"`
 }
 
 // Running is one thing in progress.
@@ -88,6 +94,7 @@ func (a *App) needs() []Need {
 	}
 	out = append(out, a.workNeeds()...)
 	out = append(out, a.proposalNeeds()...)
+	out = append(out, a.questionNeeds()...)
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Time.After(out[j].Time) })
 	return out
 }
@@ -124,7 +131,11 @@ func (a *App) deskMsg() map[string]any {
 	}
 }
 
-func (a *App) broadcastDesk() { a.broadcast(a.deskMsg()) }
+func (a *App) broadcastDesk() {
+	a.deskBcast.Lock()
+	defer a.deskBcast.Unlock()
+	a.broadcast(a.deskMsg()) // built and sent in order: the last one sent is the newest
+}
 
 // projectsSummary is a compact, chartable view of every project (for the
 // home agent and for dashboard widgets).
@@ -187,6 +198,29 @@ func (a *App) pendingProposals(pid string) []wiki.Proposal {
 		if p.Status == "pending" {
 			out = append(out, p)
 		}
+	}
+	return out
+}
+
+// questionNeeds: an agent asked you something and you haven't answered.
+// A project's setup can run while you're elsewhere; its question has to
+// reach you here, not sit in a chat you haven't opened.
+func (a *App) questionNeeds() []Need {
+	var out []Need
+	for _, r := range a.allRuns() {
+		if r.Kind == KindTask {
+			continue
+		}
+		ask, ok := r.pendingQuestion() // the first question since you last said something
+		if !ok {
+			continue
+		}
+		var q struct {
+			Question string `json:"question"`
+		}
+		json.Unmarshal([]byte(ask.Args), &q)
+		out = append(out, Need{ID: fmt.Sprintf("q:%s:%d", r.ID, ask.ID), Source: "question", Project: r.Project, Kind: "question",
+			Title: firstNonEmpty(q.Question, "A question for you"), Detail: "The " + r.label() + " asked.", Time: time.UnixMilli(ask.TS), Agent: r.ID, Msg: ask.ID})
 	}
 	return out
 }

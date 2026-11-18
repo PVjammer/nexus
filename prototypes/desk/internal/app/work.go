@@ -259,6 +259,9 @@ type TaskEdit struct {
 // unique (small models remember titles better than refs).
 func (a *App) checkItemRef(ref string) (WorkItem, error) {
 	ref = strings.TrimSpace(ref)
+	if isBareItemID(ref) { // "i34" for "item:i34": models drop the prefix
+		ref = "item:" + ref
+	}
 	var refs []string
 	var byTitle []WorkItem
 	for _, w := range a.workItems() {
@@ -274,6 +277,11 @@ func (a *App) checkItemRef(ref string) (WorkItem, error) {
 	}
 	if len(byTitle) == 1 {
 		return byTitle[0], nil
+	}
+	for _, p := range a.Desk.Snapshot().Proposals {
+		if p.Item == "" && p.Status == "open" && normTitle(p.Title) == normTitle(ref) {
+			return WorkItem{}, fixErr("%q is still a suggestion in the user's checklist, not a work item. It becomes one when they tick it; you'll be told. Don't act on it until then", p.Title)
+		}
 	}
 	return WorkItem{}, fixErr("no work item %q. Call work_items for refs; some now: %s", ref, strings.Join(refs, ", "))
 }
@@ -765,4 +773,16 @@ func (a *App) handleWork(t string, m map[string]any) (any, error) {
 		return a.workItemSet("you", "", str(m["item"]), str(m["state"]), str(m["parkNote"]), optStrs(m, "doneWhen"), optStr(m, "brief"), "")
 	}
 	return nil, fmt.Errorf("unknown %s", t)
+}
+
+func isBareItemID(s string) bool {
+	if len(s) < 2 || s[0] != 'i' {
+		return false
+	}
+	for _, c := range s[1:] {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
 }

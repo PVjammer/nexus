@@ -76,6 +76,13 @@ type Run struct {
 
 	finishing bool // task agent called task_finish; stop it when the turn ends
 
+	// asked: the agent called ask_user this turn. One question per turn: the
+	// user answers it before anything else happens (see CallTool).
+	asked string
+	// batches: proposal batches this turn, by project and item, so several
+	// work_propose calls in one turn make one checklist.
+	batches map[string]string
+
 	draftChars int       // size of the tool call the model is still writing
 	draftSent  time.Time // last progress broadcast
 
@@ -339,7 +346,12 @@ func (r *Run) sayAs(role, shown, context string) error {
 		return nil
 	}
 	r.closeStream()
+	r.newTurn()
+	_, wasAsked := r.pendingQuestion()
 	r.add(ChatMsg{Role: role, Text: shown})
+	if wasAsked {
+		r.a.broadcastDesk() // the question leaves Needs you
+	}
 	if err := r.ensureStarted(); err != nil {
 		r.add(ChatMsg{Role: "system", Text: err.Error(), Error: true})
 		return err
@@ -355,6 +367,28 @@ func (r *Run) sayAs(role, shown, context string) error {
 		return err
 	}
 	return nil
+}
+
+// pendingQuestion is the agent's unanswered ask_user message, if any.
+func (r *Run) pendingQuestion() (ChatMsg, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var ask ChatMsg
+	found := false
+	for i := len(r.chat) - 1; i >= 0 && r.chat[i].Role != "you" && r.chat[i].Role != "app"; i-- {
+		if m := r.chat[i]; m.Role == "tool" && m.Tool == "ask_user" && !m.Error {
+			ask, found = m, true
+		}
+	}
+	return ask, found
+}
+
+// newTurn clears what was true only for the turn that ended.
+func (r *Run) newTurn() {
+	r.mu.Lock()
+	r.asked = ""
+	r.batches = nil
+	r.mu.Unlock()
 }
 
 func context2() context.Context { return context.Background() }
@@ -401,7 +435,11 @@ func (r *Run) pump() {
 				r.a.broadcast(map[string]any{"t": "drafting", "agent": r.ID, "chars": 0})
 			}
 			r.closeStream()
-			r.add(ChatMsg{Role: "tool", Tool: ev.Tool, CallID: ev.CallID, Args: truncate(ev.Args, 400)})
+			args := ev.Args
+			if ev.Tool != "ask_user" { // the question card parses ask_user's args: keep them whole (the tool caps their size)
+				args = truncate(args, 400)
+			}
+			r.add(ChatMsg{Role: "tool", Tool: ev.Tool, CallID: ev.CallID, Args: args})
 		case agent.EventToolEnd:
 			r.closeStream()
 			r.mu.Lock()
@@ -423,6 +461,7 @@ func (r *Run) pump() {
 			r.persistSoon()
 		case agent.EventTurnEnd:
 			r.closeStream()
+			r.newTurn()
 			r.setBusy(false)
 			r.a.broadcast(map[string]any{"t": "turnEnd", "agent": r.ID})
 			if r.Kind == KindTask {

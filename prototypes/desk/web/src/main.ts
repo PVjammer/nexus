@@ -4,7 +4,7 @@
 import { ago, app, connect, desk, h, modal, on, project, promptModal, request, send, setView, space, toast, token, view, type Detail, type Need } from "./core";
 import { allViews, getView, position, render } from "./layout";
 import { md, statusLabel } from "./panes";
-import { ChatPanel, isBusy } from "./chat";
+import { ChatPanel, isBusy, questionCard, transcriptOf } from "./chat";
 import { ic, kindIc } from "./icons";
 import { customizer, drawHome as drawHomeGrid, initHome, registerKind, setRedraw, startEditing, stopEditing, toastAgentChange, type WidgetCtx } from "./home";
 import { agentName, openChats, toggleChats } from "./chats";
@@ -191,6 +191,13 @@ function needCard(n: Need): HTMLElement {
   if (n.source === "proposals") {
     acts.push(h("button", { class: "primary", onclick: () => work.openProposals(n.id.slice(6)) }, "Review"));
   }
+  let answer: HTMLElement | string = "";
+  if (n.source === "question" && n.agent) {
+    // Answer right here: the same card as in the chat, clicks go to that agent.
+    const m = transcriptOf(n.agent).find((x) => x.id === n.msg);
+    if (m) answer = questionCard(n.agent, m);
+    acts.push(h("button", { onclick: () => openChats(n.agent) }, ic("chat"), " Open the conversation"));
+  }
   if (n.source === "work" && n.task) {
     acts.push(h("button", { class: "primary", onclick: () => work.openTask(n.task!) }, n.kind === "review" ? "Review" : "Open"));
     acts.push(h("button", { onclick: () => request({ t: "workTaskUpdate", id: n.task, status: "done", space: "" }).catch((e) => toast(e.message, "error")) }, ic("check"), " Done"));
@@ -200,10 +207,11 @@ function needCard(n: Need): HTMLElement {
     if (n.report) acts.push(h("button", { class: "primary", onclick: () => openIn(p.id, "review", { path: n.report }) }, ic("doc"), " Report"));
     acts.push(h("button", { onclick: () => send({ t: "taskReviewed", task: n.task }) }, ic("check"), " Done"));
   }
-  const kindTag = n.source === "foreman" ? `foreman · ${n.kind}` : n.source === "task" ? `task agent · ${statusLabel[n.kind || ""] || n.kind}` : n.source === "wiki" ? "wiki proposal" : n.source === "proposals" ? "suggestions" : n.source === "work" ? (n.detail === "todo" ? "todo" : `task · ${n.kind === "review" ? "review" : "yours"}`) : "capture";
+  const kindTag = n.source === "foreman" ? `foreman · ${n.kind}` : n.source === "task" ? `task agent · ${statusLabel[n.kind || ""] || n.kind}` : n.source === "wiki" ? "wiki proposal" : n.source === "proposals" ? "suggestions" : n.source === "question" ? "question" : n.source === "work" ? (n.detail === "todo" ? "todo" : `task · ${n.kind === "review" ? "review" : "yours"}`) : "capture";
   return h("div", { class: `card need src-${n.source} k-${n.kind || ""}` },
     h("div", { class: "card-top" }, h("b", {}, n.title), p ? h("span", { class: "tag" }, p.name) : "", h("span", { class: "muted small grow-r" }, `${kindTag} · ${ago(n.time)}`)),
     n.detail ? h("div", { class: "need-detail" }, n.detail) : "",
+    answer,
     acts.length ? h("div", { class: "row" }, ...acts) : "");
 }
 
@@ -234,7 +242,8 @@ function projectCard(p: Detail): HTMLElement {
   const ws = (p.workstreams || []).filter((w) => !w.closed);
   const working = ws.filter((w) => w.agentStatus === "working").length;
   const backlog = (p.backlog || []).filter((b) => !b.done).length;
-  const items = (desk?.desk.items || []).filter((i) => i.project === p.id && i.state === "open").length;
+  const wis = work.items().filter((w) => w.project === p.id);
+  const doing = wis.filter((w) => w.state === "in-progress").length, later = wis.filter((w) => w.state === "not-started").length;
   const needs = needsCount(p.id);
   const stat = (n: number, label: string, cls = "") => n ? h("span", { class: `stat ${cls}` }, h("b", {}, String(n)), ` ${label}`) : null;
   return h("div", { class: "card proj", onclick: (e: Event) => { if (!(e.target as HTMLElement).closest(".menu")) go({ kind: "project", id: p.id }); } },
@@ -245,7 +254,7 @@ function projectCard(p: Detail): HTMLElement {
       ])),
     h("div", { class: "brief" }, p.brief || p.readme || h("span", { class: "muted" }, "No brief yet.")),
     h("div", { class: "stats" },
-      stat(needs, "need you", "need"), stat(working, "working", "work"), stat(ws.length, "workstreams"), stat(backlog, "backlog"), stat(items, "items"),
+      stat(needs, "need you", "need"), stat(working, "working", "work"), stat(ws.length, "workstreams"), stat(backlog, "backlog"), stat(doing, "in progress"), stat(later, "not started"),
       p.git ? h("span", { class: "stat git", title: p.git.commits?.[0]?.subject || "" }, ic("code"), ` ${p.git.branch}${p.git.dirty ? ` · ${p.git.dirty} changed` : ""}`) : null,
       !p.exists ? h("span", { class: "stat need" }, "folder missing") : null));
 }
@@ -258,6 +267,7 @@ const tag = (pid?: string) => pid ? h("span", { class: "tag" }, project(pid)?.na
 function needOpen(n: Need): (() => void) | null {
   const p = n.project ? project(n.project) : undefined;
   if (n.source === "work" && n.task) return () => work.openTask(n.task!);
+  if (n.source === "question" && n.agent) return () => openChats(n.agent);
   if (n.source === "task" && p) return () => openIn(p.id, "task", { task: n.task });
   if (n.report && p) return () => openIn(p.id, "review", { path: n.report });
   if (n.source === "wiki" && p) return () => reviewProposal(p.id, n.id.split(":").slice(2).join(":"));
@@ -408,11 +418,16 @@ function drawRail() {
   const ws = p.workstreams || [];
   const backlog = (p.backlog || []).filter((b) => !b.done);
   const needs = (desk?.needs || []).filter((n) => n.project === p.id);
-  const addItem = h("input", { placeholder: "Add an item…" }) as HTMLInputElement;
-  addItem.addEventListener("keydown", (e) => { if (e.key === "Enter" && addItem.value.trim()) { send({ t: "itemAdd", project: p.id, kind: "task", title: addItem.value.trim() }); addItem.value = ""; } });
-  const newTask = h("button", { class: "mini", title: "Draft a task for a background agent", onclick: async (e: Event) => {
+  // Work items: goals (in your list, or read from a source). Tasks: the next
+  // actions toward them. Agent runs: background agents you sent off with a brief.
+  const wis = work.items().filter((w) => w.project === p.id && w.state !== "parked");
+  const wTasks = work.tasks().filter((t) => t.project === p.id && t.item && t.status !== "done" && work.items().find((w) => w.ref === t.item)?.state === "in-progress");
+  const notes = openItems.filter((i) => i.kind !== "task");
+  const addItem = h("input", { placeholder: "Add a work item…" }) as HTMLInputElement;
+  addItem.addEventListener("keydown", (e) => { if (e.key === "Enter" && addItem.value.trim()) { work.addWorkItem(p.id, addItem.value.trim()); addItem.value = ""; } });
+  const newTask = h("button", { class: "mini", title: "Send a background agent off with a brief", onclick: async (e: Event) => {
     e.stopPropagation();
-    const t = await promptModal("New task", "What should a background agent look into? (you'll edit the brief next)");
+    const t = await promptModal("New agent run", "What should a background agent look into? (you'll edit the brief next)");
     if (t) send({ t: "taskNew", project: p.id, title: t });
   } }, ic("plus"), " Task");
 
@@ -429,21 +444,30 @@ function drawRail() {
         h("button", { onclick: () => send({ t: "open", kind: "log" }) }, ic("log"), " Log"))),
     needs.length ? railSec("needs", "Needs you", needs.length, () => needs.map((n) => h("div", { class: "ritem need", onclick: () => {
       if (n.source === "work" && n.task) work.openTask(n.task);
+      else if (n.source === "question" && n.agent) openChats(n.agent);
       else if (n.task) send({ t: "open", kind: "task", props: { task: n.task } });
       else if (n.report) send({ t: "open", kind: "review", props: { path: n.report } });
     } }, h("span", { class: `dot k-${n.kind}` }), h("span", { class: "grow" }, h("b", {}, n.title), h("div", { class: "muted small" }, n.detail || "")), h("span", { class: "muted small" }, ago(n.time))))) : null,
-    railSec("tasks", "Tasks", tasks.filter((t) => !t.reviewed).length || "", () => [
-      ...tasks.filter((t) => !t.reviewed).map((t) => h("div", { class: "ritem", onclick: () => send({ t: "open", kind: "task", props: { task: t.id } }) },
-        h("span", { class: `status st-${t.status}` }, statusLabel[t.status] || t.status), h("span", { class: "grow" }, t.title))),
-      tasks.filter((t) => !t.reviewed).length ? null : h("div", { class: "muted small" }, "Nothing dispatched. Draft a task here, ask the project agent, or click → on a backlog item."),
-    ], true, newTask),
-    railSec("items", "Items", openItems.length || "", () => [
-      ...openItems.map((i) => h("div", { class: "ritem" },
-        h("input", { type: "checkbox", onclick: (e: Event) => { e.stopPropagation(); send({ t: "itemUpdate", item: i.id, state: "done" }); } }),
-        h("span", { class: "grow" }, h("span", { class: `kind k-${i.kind}` }, i.kind), " ", i.title),
-        h("button", { class: "mini", title: "Dispatch to a background agent", onclick: () => send({ t: "taskNew", project: p.id, title: i.title, from: i.id }) }, "→"))),
+    railSec("items", "Work items", wis.length || "", () => [
+      ...wis.map((w) => h("div", { class: "ritem", title: [w.brief, (w.doneWhen || []).length ? "Done when: " + (w.doneWhen || []).join("; ") : ""].filter(Boolean).join("\n") || w.title, onclick: () => work.openWorkspace(w.ref) },
+        h("span", { class: "grow" }, w.title, w.brief ? h("div", { class: "muted small" }, w.brief) : ""),
+        w.state === "in-progress" ? work.moveChip(w)
+          : h("button", { class: "mini keep", title: "Put it in progress", onclick: (e: Event) => { e.stopPropagation(); work.startItem(w); } }, "Start"))),
+      wis.length ? null : h("div", { class: "muted small" }, "No work items yet. Set up the project, or add one here."),
       addItem,
     ]),
+    railSec("wtasks", "Tasks", wTasks.length || "", () => [
+      ...wTasks.map((t) => work.taskRow(t)),
+      wTasks.length ? null : h("div", { class: "muted small" }, "No open tasks on work items in progress."),
+    ]),
+    notes.length ? railSec("notes", "Notes and questions", notes.length, () => notes.map((i) => h("div", { class: "ritem" },
+      h("input", { type: "checkbox", title: "Done: clear it", onclick: (e: Event) => { e.stopPropagation(); send({ t: "itemUpdate", item: i.id, state: "done" }); } }),
+      h("span", { class: "grow" }, h("span", { class: `kind k-${i.kind}` }, i.kind), " ", i.title))), false) : null,
+    railSec("tasks", "Agent runs", tasks.filter((t) => !t.reviewed).length || "", () => [
+      ...tasks.filter((t) => !t.reviewed).map((t) => h("div", { class: "ritem", onclick: () => send({ t: "open", kind: "task", props: { task: t.id } }) },
+        h("span", { class: `status st-${t.status}` }, statusLabel[t.status] || t.status), h("span", { class: "grow" }, t.title))),
+      tasks.filter((t) => !t.reviewed).length ? null : h("div", { class: "muted small" }, "No background agents running. Send one off with a brief here, or ask the project agent."),
+    ], false, newTask),
     p.foreman ? railSec("ws", "Workstreams", ws.filter((w) => !w.closed).length, () => ws.filter((w) => !w.closed).map((w) => h("div", { class: "ritem", title: w.goal || "", onclick: () => w.report && send({ t: "open", kind: "review", props: { path: `${p.id}/${w.report}` } }) },
       h("span", { class: `status ws-${w.agentStatus}` }, w.agentStatus || "?"),
       h("span", { class: "grow" }, h("b", {}, w.name), h("div", { class: "muted small" }, `report: ${w.reportStatus || "—"} · ${ago(w.updated)}`), w.summary ? h("div", { class: "small" }, w.summary) : "")))) : null,

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pvjammer/nexus/prototypes/desk/internal/desk"
 	"github.com/pvjammer/nexus/prototypes/desk/internal/scan"
 )
 
@@ -40,6 +41,7 @@ func workRepo(t *testing.T, dir string) string {
 	g("commit", "-qm", "auth: new tokens")
 	g("checkout", "-q", "main")
 	w("src/wip.go", "package main\n")
+	w("notes/todo.md", "# Todo\n\n- [ ] Write the release notes\n- [x] done already\n\nedited\n") // " M notes/todo.md": porcelain's leading space
 	return p
 }
 
@@ -71,7 +73,7 @@ func TestScanFindsSignsOfWork(t *testing.T) {
 	if len(r.Branches) != 1 || !strings.Contains(r.Branches[0].Text, "auth-v2: auth: new tokens (1 commits not on main)") {
 		t.Fatalf("branches: %+v", r.Branches)
 	}
-	if r.Changes == nil || !strings.Contains(r.Changes.Text, "wip.go") {
+	if r.Changes == nil || !strings.Contains(r.Changes.Text, "src/wip.go") || !strings.Contains(r.Changes.Text, "changes: notes/todo.md") {
 		t.Fatalf("uncommitted: %+v", r.Changes)
 	}
 }
@@ -158,6 +160,11 @@ func TestOnboardingToolsCheckTheirInput(t *testing.T) {
 	if out := mustCall(t, a, "p:alpha", "ask_user", map[string]any{"question": "When?", "options": []any{"Now", "Later"}}); !strings.Contains(out, "end your turn") {
 		t.Fatal(out)
 	}
+	// one question per turn: a second question, or anything else, waits for the answer
+	wantErrAs(t, a, "p:alpha", "ask_user", map[string]any{"question": "And who?", "options": []any{"Me", "Sam"}}, `already asked "When?"`)
+	wantErrAs(t, a, "p:alpha", "work_item_add", map[string]any{"title": "Too soon", "reason": "r"}, "End your turn")
+	r, _ := a.run("p:alpha")
+	r.newTurn() // the user answered
 	mustCall(t, a, "p:alpha", "work_item_add", map[string]any{"title": "Add dark mode", "start": true, "brief": "theme", "reason": "r"})
 	wantErrAs(t, a, "p:alpha", "work_item_add", map[string]any{"title": "add dark mode", "reason": "r"}, "already exists")
 	if w, err := a.checkItemRef("Add dark mode"); err != nil || w.State != "in-progress" || w.Brief != "theme" {
@@ -195,5 +202,118 @@ func wantErrAs(t *testing.T, a *App, agent, tool string, args map[string]any, wa
 	_, err := call(t, a, agent, tool, args)
 	if err == nil || !strings.Contains(err.Error(), want) {
 		t.Fatalf("%s: want error containing %q, got %v", tool, want, err)
+	}
+}
+
+func TestProposalsCarryShapeAndOrder(t *testing.T) {
+	a, dir := newTestApp(t)
+	if _, err := a.AddProject("Gamma", workRepo(t, dir)); err != nil {
+		t.Fatal(err)
+	}
+	// work items arrive with a draft brief and done-when, so an item nobody
+	// has started yet still says what it is and when it's finished
+	mustCall(t, a, "p:gamma", "work_propose", map[string]any{"reason": "setup", "proposals": []any{
+		map[string]any{"title": "Add CSV export", "brief": "Orders to CSV from the admin page.", "done_when": []any{"Orders export", " ", "Finance checked one"}},
+	}})
+	p := a.openProposals()[0]
+	if p.Brief == "" || len(p.DoneWhen) != 2 {
+		t.Fatalf("draft kept on the proposal: %+v", p)
+	}
+	if _, err := a.resolveProposals([]string{p.ID}, nil, false); err != nil {
+		t.Fatal(err)
+	}
+	w, _ := a.checkItemRef("Add CSV export")
+	if w2, err := a.checkItemRef(strings.TrimPrefix(w.Ref, "item:")); err != nil || w2.Ref != w.Ref {
+		t.Fatalf("a bare id works too: %v", err)
+	}
+	if w.State != "not-started" || w.Brief != "Orders to CSV from the admin page." || len(w.DoneWhen) != 2 {
+		t.Fatalf("accepted item keeps its draft: %+v", w)
+	}
+
+	// tasks in order: each one waits on the one before it
+	mustCall(t, a, "p:gamma", "work_propose", map[string]any{"item": "Add CSV export", "reason": "next", "proposals": []any{
+		map[string]any{"title": "Design the columns", "assignee": "agent"},
+		map[string]any{"title": "Write the CSV writer", "assignee": "agent", "after": []any{"design the columns"}},
+		map[string]any{"title": "Check an export with finance", "assignee": "you", "after": []any{"Write the CSV writer"}},
+		map[string]any{"title": "Announce it", "assignee": "you", "after": []any{"Check an export with finance", "Design the columns"}},
+	}})
+	tp := a.openProposals()
+	// the user drops the finance check: "Announce it" still waits on the design only
+	if _, err := a.resolveProposals([]string{tp[3].ID, tp[1].ID, tp[0].ID}, []string{tp[2].ID}, false); err != nil {
+		t.Fatal(err)
+	}
+	byTitle := map[string]desk.WorkTask{}
+	for _, k := range a.Desk.Snapshot().WorkTasks {
+		byTitle[k.Title] = *k
+	}
+	design, writer, announce := byTitle["Design the columns"], byTitle["Write the CSV writer"], byTitle["Announce it"]
+	if design.Status != "todo" || writer.Status != "blocked" || len(writer.BlockedBy) != 1 || writer.BlockedBy[0] != design.ID {
+		t.Fatalf("writer waits on design: %+v / %+v", design, writer)
+	}
+	if announce.Status != "blocked" || len(announce.BlockedBy) != 1 || announce.BlockedBy[0] != design.ID {
+		t.Fatalf("a dismissed predecessor drops out: %+v", announce)
+	}
+	for _, n := range a.needs() {
+		if n.Title == "Announce it" {
+			t.Fatal("a blocked task isn't something you can do now")
+		}
+	}
+	// finishing the design frees both
+	if _, err := a.Desk.UpdateWorkTask(design.ID, func(k *desk.WorkTask) error { k.Status = "done"; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if k, _ := a.Desk.WorkTask(announce.ID); k.Status != "todo" {
+		t.Fatalf("unblocked when the design is done: %+v", k)
+	}
+}
+
+func TestUnansweredQuestionIsInNeedsYou(t *testing.T) {
+	a, _ := newTestApp(t)
+	r, _ := a.run("p:alpha")
+	q := func() []Need {
+		var out []Need
+		for _, n := range a.needs() {
+			if n.Source == "question" {
+				out = append(out, n)
+			}
+		}
+		return out
+	}
+	r.add(ChatMsg{Role: "you", Text: "Set up this project"})
+	r.add(ChatMsg{Role: "tool", Tool: "ask_user", Args: `{"question":"Which first?","options":["A","B"]}`, Done: true})
+	r.add(ChatMsg{Role: "tool", Tool: "ask_user", Args: `{"question":"And then?","options":["C","D"]}`, Done: true, Error: true})
+	r.add(ChatMsg{Role: "agent", Text: "Asked."})
+	ns := q()
+	if len(ns) != 1 || ns[0].Title != "Which first?" || ns[0].Project != "alpha" || ns[0].Agent != "p:alpha" {
+		t.Fatalf("the question reaches Needs you: %+v", ns)
+	}
+	r.add(ChatMsg{Role: "you", Text: "A"})
+	if ns := q(); len(ns) != 0 {
+		t.Fatalf("answered: %+v", ns)
+	}
+}
+
+func TestOneChecklistPerTurn(t *testing.T) {
+	a, dir := newTestApp(t)
+	if _, err := a.AddProject("Gamma", workRepo(t, dir)); err != nil {
+		t.Fatal(err)
+	}
+	if out := mustCall(t, a, "p:gamma", "project_scan", nil); !strings.Contains(out, "README (start)") || !strings.Contains(out, "Gamma exports orders.") {
+		t.Fatalf("the scan starts with the README: %s", out)
+	}
+	mustCall(t, a, "p:gamma", "work_propose", map[string]any{"reason": "r", "proposals": []any{map[string]any{"title": "Add CSV export"}}})
+	// a model that sends the list as a JSON string, in a second call the same turn
+	mustCall(t, a, "p:gamma", "work_propose", map[string]any{"reason": "r", "proposals": `[{"title": "Write the release notes"}]`})
+	ps := a.openProposals()
+	if len(ps) != 2 || ps[0].Batch != ps[1].Batch {
+		t.Fatalf("one turn, one checklist: %+v", ps)
+	}
+	// acting on a suggestion before the user ticks it
+	wantErrAs(t, a, "p:gamma", "work_item_set", map[string]any{"item": "Add CSV export", "state": "in-progress", "reason": "r"}, "still a suggestion")
+	r, _ := a.run("p:gamma")
+	r.newTurn()
+	mustCall(t, a, "p:gamma", "work_propose", map[string]any{"reason": "r", "proposals": []any{map[string]any{"title": "Finish the auth refactor"}}})
+	if ps := a.openProposals(); len(ps) != 3 || ps[2].Batch == ps[0].Batch {
+		t.Fatalf("a new turn is a new checklist: %+v", ps)
 	}
 }

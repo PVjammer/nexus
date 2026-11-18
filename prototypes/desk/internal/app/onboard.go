@@ -20,6 +20,7 @@ package app
 // for every project.
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -46,6 +47,9 @@ func (a *App) scanProject(pid string) (scan.Result, error) {
 func describeScan(r scan.Result, known []string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Scanned %s (%d files).\n", r.Root, r.Files)
+	if r.Readme != "" {
+		fmt.Fprintf(&b, "\nREADME (start). Check where it says things stand before proposing; don't propose what it or a newer doc says is done:\n%s\n", r.Readme)
+	}
 	group := func(title string, fs []scan.Finding, withSection bool) {
 		if len(fs) == 0 {
 			return
@@ -107,14 +111,21 @@ func normTitle(s string) string { return strings.ToLower(strings.Join(strings.Fi
 
 // ProposalIn is one proposal as an agent sends it.
 type ProposalIn struct {
-	Title, Why, Assignee string
-	Evidence             []string
+	Title, Why, Assignee, Brief string
+	Evidence, DoneWhen, After   []string
 }
 
 // propose stores a batch of proposals: work items for a project (item == "")
 // or tasks toward one work item. Duplicates of what's already there, or was
 // dismissed before, are skipped and named.
 func (a *App) propose(agentID, pid, item string, in []ProposalIn) ([]desk.WorkProposal, []string, error) {
+	return a.proposeIn(nil, agentID, pid, item, in)
+}
+
+// proposeIn is propose for an agent run: calls in the same turn for the same
+// project and item go into one batch (one checklist), as long as the user
+// hasn't started ticking it.
+func (a *App) proposeIn(r *Run, agentID, pid, item string, in []ProposalIn) ([]desk.WorkProposal, []string, error) {
 	if item != "" {
 		w, err := a.checkItemRef(item)
 		if err != nil {
@@ -170,13 +181,38 @@ func (a *App) propose(agentID, pid, item string, in []ProposalIn) ([]desk.WorkPr
 		if item != "" && as == "" {
 			as = "you"
 		}
-		keep = append(keep, desk.WorkProposal{Project: pid, Item: item, Title: oneLine(title, 160), Why: oneLine(p.Why, 400),
-			Evidence: p.Evidence, Assignee: as, Agent: agentID})
+		wp := desk.WorkProposal{Project: pid, Item: item, Title: oneLine(title, 160), Why: oneLine(p.Why, 400),
+			Evidence: p.Evidence, Assignee: as, Agent: agentID}
+		if item == "" {
+			wp.Brief, wp.DoneWhen = strings.TrimSpace(p.Brief), cleanList(p.DoneWhen)
+		} else {
+			wp.After = cleanList(p.After)
+		}
+		keep = append(keep, wp)
 	}
 	if len(keep) == 0 {
 		return nil, skipped, nil
 	}
-	out := a.Desk.AddProposals(keep)
+	batch, key := "", pid+"|"+item
+	if r != nil {
+		r.mu.Lock()
+		batch = r.batches[key]
+		r.mu.Unlock()
+		for _, p := range a.Desk.Snapshot().Proposals {
+			if p.Batch == batch && p.Status != "open" {
+				batch = "" // the user is already going through it
+			}
+		}
+	}
+	out := a.Desk.AddToBatch(batch, keep)
+	if r != nil {
+		r.mu.Lock()
+		if r.batches == nil {
+			r.batches = map[string]string{}
+		}
+		r.batches[key] = out[0].Batch
+		r.mu.Unlock()
+	}
 	what := "work items"
 	if item != "" {
 		what = "tasks for " + item
@@ -192,6 +228,13 @@ func (a *App) propose(agentID, pid, item string, in []ProposalIn) ([]desk.WorkPr
 func (a *App) resolveProposals(accept, dismiss []string, start bool) (string, error) {
 	var took, dropped []string
 	agentID := ""
+	// In the order they were proposed, so "after" can point at a task
+	// accepted a moment earlier in the same checklist.
+	accept = a.inProposalOrder(accept)
+	taskIDs := map[string]string{} // item + normalized title -> task id
+	for _, t := range a.Desk.Snapshot().WorkTasks {
+		taskIDs[t.Item+"\x00"+normTitle(t.Title)] = t.ID
+	}
 	for _, id := range accept {
 		p, ok := a.Desk.Proposal(id)
 		if !ok || p.Status != "open" {
@@ -208,13 +251,28 @@ func (a *App) resolveProposals(accept, dismiss []string, start bool) (string, er
 			}
 			it := a.Desk.AddItem(desk.Item{Project: p.Project, Kind: "task", Title: p.Title, Body: strings.TrimSpace(body), State: "open", Source: "agent"})
 			ref := "item:" + it.ID
-			if start {
-				a.Desk.Track(ref, func(t *desk.Tracked) { t.State = "in-progress" })
-			}
+			a.Desk.Track(ref, func(t *desk.Tracked) {
+				t.Brief, t.DoneWhen = p.Brief, p.DoneWhen
+				if start {
+					t.State = "in-progress"
+				}
+			})
 			took = append(took, fmt.Sprintf("%q (%s)", p.Title, ref))
 		} else {
 			t := desk.WorkTask{Item: p.Item, Project: p.Project, Title: p.Title, Status: "todo", Assignee: firstNonEmpty(p.Assignee, "you"), By: "agent", Why: p.Why}
+			// "after" names tasks by title; the ones that exist (accepted
+			// earlier in this checklist, or already there) become blockers.
+			// A dismissed predecessor just drops out.
+			for _, ti := range p.After {
+				if bid := taskIDs[p.Item+"\x00"+normTitle(ti)]; bid != "" {
+					t.BlockedBy = append(t.BlockedBy, bid)
+				}
+			}
+			if len(t.BlockedBy) > 0 {
+				t.Status = "blocked"
+			}
 			nt := a.Desk.AddWorkTask(t)
+			taskIDs[p.Item+"\x00"+normTitle(p.Title)] = nt.ID
 			took = append(took, fmt.Sprintf("%q (%s)", p.Title, nt.ID))
 		}
 	}
@@ -238,7 +296,7 @@ func (a *App) resolveProposals(accept, dismiss []string, start bool) (string, er
 		}
 	}
 	if len(dropped) > 0 {
-		msg += " Not now: " + strings.Join(dropped, ", ") + "."
+		msg += " Dismissed (they won't be suggested again; not parked): " + strings.Join(dropped, ", ") + "."
 	}
 	a.workChanged("you", "reviewed proposals", fmt.Sprintf("%d accepted, %d dismissed", len(took), len(dropped)), "")
 	if agentID != "" {
@@ -399,10 +457,13 @@ func (a *App) startShaping(ref string) error {
 func (a *App) onboardTools() []Tool {
 	reason := sprop("why, in a few words (shown to the user)")
 	proposal := obj([]string{"title"}, map[string]any{
-		"title":    sprop("short, starting with a verb: 'Add CSV export', 'Finish the auth refactor (branch auth-v2)'"),
-		"why":      sprop("one line: why this looks like work, from what you found"),
-		"evidence": aprop("where you found it, copied from the scan: 'docs/plan.md:12', 'branch auth-v2'", sprop("")),
-		"assignee": sprop("tasks only: you (default), agent, or a person's name"),
+		"title":     sprop("short, starting with a verb: 'Add CSV export', 'Finish the auth refactor (branch auth-v2)'"),
+		"why":       sprop("one line: why this looks like work, from what you found"),
+		"evidence":  aprop("where you found it, copied from the scan: 'docs/plan.md:12', 'branch auth-v2'", sprop("")),
+		"assignee":  sprop("tasks only: you (default), agent, or a person's name"),
+		"brief":     sprop("work items only: what it is and what's in scope, 1-2 lines, from what you read"),
+		"done_when": aprop("work items only: 2-4 short checks that say it's finished, e.g. 'CSV export works from the admin page'", sprop("")),
+		"after":     aprop("tasks only: titles of tasks this one comes after (earlier in this list, or already on the work item). It waits until they're done", sprop("")),
 	})
 	return []Tool{
 		{Name: "project_scan", Label: "Scan the project", Kinds: HP,
@@ -440,6 +501,11 @@ func (a *App) onboardTools() []Tool {
 				}
 				var in []ProposalIn
 				list, _ := m["proposals"].([]any)
+				if js, ok := m["proposals"].(string); ok { // some models send the list as a JSON string
+					if json.Unmarshal([]byte(js), &list) != nil {
+						return "", fixErr("proposals must be a list of objects, not a string")
+					}
+				}
 				for _, x := range list {
 					pm, _ := x.(map[string]any)
 					if pm == nil {
@@ -449,15 +515,16 @@ func (a *App) onboardTools() []Tool {
 						}
 						return "", fixErr("each proposal is an object like {\"title\": \"Add CSV export\", \"why\": \"...\"}")
 					}
-					in = append(in, ProposalIn{Title: sArg(pm, "title"), Why: sArg(pm, "why"), Assignee: sArg(pm, "assignee"), Evidence: strs(pm["evidence"])})
+					in = append(in, ProposalIn{Title: sArg(pm, "title"), Why: sArg(pm, "why"), Assignee: sArg(pm, "assignee"), Evidence: strs(pm["evidence"]),
+						Brief: sArg(pm, "brief"), DoneWhen: strs(pm["done_when"]), After: strs(pm["after"])})
 				}
-				out, skipped, err := a.propose(c.Run.ID, pid, sArg(m, "item"), in)
+				out, skipped, err := a.proposeIn(c.Run, c.Run.ID, pid, sArg(m, "item"), in)
 				if err != nil {
 					return "", err
 				}
 				var b strings.Builder
 				if len(out) > 0 {
-					fmt.Fprintf(&b, "Proposed %d (batch %s). The user sees them as a checklist; you'll be told what they accept. Tell them in one line, and you can ask your next question meanwhile.", len(out), out[0].Batch)
+					fmt.Fprintf(&b, "Proposed %d (batch %s). They're suggestions in the user's checklist, not work items yet: you'll be told what they accept. Tell them in one line, and you can ask your next question meanwhile.", len(out), out[0].Batch)
 				}
 				if len(skipped) > 0 {
 					fmt.Fprintf(&b, " Skipped (already there or dismissed before): %s.", strings.Join(skipped, "; "))
@@ -488,6 +555,39 @@ func (a *App) onboardTools() []Tool {
 				}
 				return fmt.Sprintf("added %s %q (%s)%s", w.Ref, w.Title, w.State, note), nil
 			}},
+		{Name: "project_setup", Label: "Set up projects", Kinds: H,
+			Description: "Start setting up projects the user just added: each project's agent looks through its folder in the background and proposes work items. What they find (a checklist) and their questions reach the user in Needs you. Only for projects the user wants set up now.",
+			Parameters: obj([]string{"projects", "reason"}, map[string]any{
+				"projects": aprop("project ids", sprop("")), "reason": reason,
+			}),
+			run: func(a *App, c *Ctx, m map[string]any) (string, error) {
+				if err := needReason(m); err != nil {
+					return "", err
+				}
+				ids := strs(m["projects"])
+				if len(ids) == 0 {
+					return "", fixErr("projects is required: the ids project_add gave, e.g. [\"gamma\"]")
+				}
+				var started, already []string
+				for _, id := range ids {
+					if o, ok := a.Desk.Onboarding(id); ok && !o.Started.IsZero() {
+						already = append(already, id)
+						continue
+					}
+					if err := a.startOnboarding(id); err != nil {
+						return "", err
+					}
+					started = append(started, id)
+				}
+				out := ""
+				if len(started) > 0 {
+					out = fmt.Sprintf("Setting up %s in the background. Their suggestions and questions will show in Needs you. Tell the user that in one line.", strings.Join(started, ", "))
+				}
+				if len(already) > 0 {
+					out += fmt.Sprintf(" Already set up before: %s (the user can press Set up in the project to look again).", strings.Join(already, ", "))
+				}
+				return strings.TrimSpace(out), nil
+			}},
 		{Name: "ask_user", Label: "Ask", Kinds: []string{KindHome, KindProject, KindCustomizer},
 			Description: "Ask the user one question, with 2-5 suggested answers they can click (they can also type their own). Use it when you need a decision or a detail. Then end your turn: the answer is their next message.",
 			Parameters: obj([]string{"question", "options"}, map[string]any{
@@ -503,6 +603,14 @@ func (a *App) onboardTools() []Tool {
 				}
 				if len(opts) < 2 || len(opts) > 6 {
 					return "", fixErr("give 2-5 options to click, e.g. [\"This week\", \"This month\", \"No deadline\"]")
+				}
+				if len([]rune(q)) > 200 {
+					return "", fixErr("the question is %d characters; keep it under 200. Put the background in your message before asking, and ask only the question", len([]rune(q)))
+				}
+				for _, o := range opts {
+					if len([]rune(o)) > 100 {
+						return "", fixErr("option %q is too long; keep each under 100 characters, a few words the user can click", oneLine(o, 40))
+					}
 				}
 				return "Asked. The user's answer will be their next message: end your turn now and wait.", nil
 			}},
@@ -523,4 +631,36 @@ func (a *App) handleOnboard(t string, m map[string]any) (any, error) {
 		return a.workItemAdd("you", str(m["project"]), str(m["title"]), str(m["brief"]), m["start"] == true)
 	}
 	return nil, fmt.Errorf("unknown %s", t)
+}
+
+// cleanList trims a list of short lines and drops empty ones.
+func cleanList(l []string) []string {
+	var out []string
+	for _, s := range l {
+		if s = oneLine(strings.TrimSpace(s), 200); s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// inProposalOrder sorts proposal ids the way they were proposed.
+func (a *App) inProposalOrder(ids []string) []string {
+	want := map[string]bool{}
+	for _, id := range ids {
+		want[id] = true
+	}
+	var out []string
+	for _, p := range a.Desk.Snapshot().Proposals {
+		if want[p.ID] {
+			out = append(out, p.ID)
+			delete(want, p.ID)
+		}
+	}
+	for _, id := range ids { // unknown ids keep their place at the end
+		if want[id] {
+			out = append(out, id)
+		}
+	}
+	return out
 }

@@ -26,13 +26,13 @@ import (
 
 // Project is one registered project. Path is a directory on your machine.
 type Project struct {
-	ID    string    `json:"id"`
-	Name  string    `json:"name"`
-	Path  string    `json:"path"`
-	Brief string    `json:"brief,omitempty"` // set by you or the home agent; else read from the README
+	ID     string          `json:"id"`
+	Name   string          `json:"name"`
+	Path   string          `json:"path"`
+	Brief  string          `json:"brief,omitempty"`  // set by you or the home agent; else read from the README
 	Space  string          `json:"space"`            // the layout space for this project
 	Addons map[string]bool `json:"addons,omitempty"` // add-ons switched on/off (unset = the add-on's default)
-	Added time.Time `json:"added"`
+	Added  time.Time       `json:"added"`
 }
 
 type Registry struct {
@@ -269,23 +269,47 @@ func readmeIntro(dir string) string {
 		if err != nil {
 			continue
 		}
+		// The first paragraph of prose that says something (40+ characters),
+		// else the first one at all. Headings, badges, HTML and code fences
+		// (ASCII-art banners live there) aren't prose.
 		var para []string
+		first := ""
+		fence := false
+		flush := func() bool {
+			p := strings.Join(para, " ")
+			para = nil
+			if first == "" {
+				first = p
+			}
+			return len(p) >= 40
+		}
+		found := ""
 		for _, line := range strings.Split(string(b), "\n") {
 			t := strings.TrimSpace(line)
-			if t == "" {
-				if len(para) > 0 {
-					break
-				}
+			if strings.HasPrefix(t, "```") || strings.HasPrefix(t, "~~~") {
+				fence = !fence
 				continue
 			}
-			if strings.HasPrefix(t, "#") || strings.HasPrefix(t, "![") || strings.HasPrefix(t, "[!") || strings.HasPrefix(t, "<") {
+			if fence {
+				continue
+			}
+			if t == "" || strings.HasPrefix(t, "#") || strings.HasPrefix(t, "![") || strings.HasPrefix(t, "[!") || strings.HasPrefix(t, "<") || strings.HasPrefix(t, "---") || strings.HasPrefix(t, "===") {
 				if len(para) > 0 {
-					break
+					if p := strings.Join(para, " "); flush() {
+						found = p
+						break
+					}
 				}
 				continue
 			}
 			para = append(para, t)
 		}
+		if found == "" && len(para) > 0 {
+			if p := strings.Join(para, " "); flush() {
+				found = p
+			}
+		}
+		para = []string{firstNonEmptyStr(found, first)}
 		s := strings.Join(para, " ")
 		if len(s) > 400 {
 			s = s[:400] + "…"
@@ -542,8 +566,8 @@ func Discover(roots []string, maxDepth int, foreman bool) []Candidate {
 			}
 			if c.Foreman || c.Git {
 				c.Readme = readmeIntro(p)
-				if len(c.Readme) > 160 {
-					c.Readme = c.Readme[:160] + "…"
+				if len(c.Readme) > 300 {
+					c.Readme = c.Readme[:300] + "…"
 				}
 				if c.Foreman || c.Readme != "" {
 					seen[p] = true
@@ -563,3 +587,10 @@ func Discover(roots []string, maxDepth int, foreman bool) []Candidate {
 }
 
 var ErrNotFound = errors.New("not found")
+
+func firstNonEmptyStr(a, b string) string {
+	if a != "" {
+		return a
+	}
+	return b
+}

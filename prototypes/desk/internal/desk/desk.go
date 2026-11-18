@@ -111,17 +111,24 @@ type Tracked struct {
 // dismisses: a new work item for a project (Item == "") or a task toward a
 // work item. Proposals come in batches the user reviews as one checklist.
 type WorkProposal struct {
-	ID       string    `json:"id"`
-	Batch    string    `json:"batch"`
-	Project  string    `json:"project"`
-	Item     string    `json:"item,omitempty"` // "" = proposes a work item; else a task toward this ref
-	Title    string    `json:"title"`
-	Why      string    `json:"why,omitempty"`
-	Evidence []string  `json:"evidence,omitempty"` // where it came from: "src/x.go:12", "branch feat/y"
-	Assignee string    `json:"assignee,omitempty"` // tasks: you | agent | a name
-	Status   string    `json:"status"`             // open | accepted | dismissed
-	Agent    string    `json:"agent"`              // who proposed it ("p:<project>", "home")
-	Created  time.Time `json:"created"`
+	ID       string   `json:"id"`
+	Batch    string   `json:"batch"`
+	Project  string   `json:"project"`
+	Item     string   `json:"item,omitempty"` // "" = proposes a work item; else a task toward this ref
+	Title    string   `json:"title"`
+	Why      string   `json:"why,omitempty"`
+	Evidence []string `json:"evidence,omitempty"` // where it came from: "src/x.go:12", "branch feat/y"
+	Assignee string   `json:"assignee,omitempty"` // tasks: you | agent | a name
+	// Work items: a draft of what it is and what done looks like, from the
+	// evidence, so an accepted item is clear before anyone shapes it.
+	Brief    string   `json:"brief,omitempty"`
+	DoneWhen []string `json:"doneWhen,omitempty"`
+	// Tasks: titles of tasks this one comes after (earlier in the batch, or
+	// already on the work item). Accepted, it starts blocked on them.
+	After   []string  `json:"after,omitempty"`
+	Status  string    `json:"status"` // open | accepted | dismissed
+	Agent   string    `json:"agent"`  // who proposed it ("p:<project>", "home")
+	Created time.Time `json:"created"`
 }
 
 // Onboarding is where a project's setup conversation is.
@@ -743,10 +750,16 @@ func (s *Store) Dismissed(id string) bool {
 // ---- proposals ----
 
 // AddProposals stores a batch and returns it with ids.
-func (s *Store) AddProposals(ps []WorkProposal) []WorkProposal {
+func (s *Store) AddProposals(ps []WorkProposal) []WorkProposal { return s.AddToBatch("", ps) }
+
+// AddToBatch adds proposals to batch (a new one when ""), so what an agent
+// proposes over several calls in one turn is one checklist.
+func (s *Store) AddToBatch(batch string, ps []WorkProposal) []WorkProposal {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	batch := s.id("b")
+	if batch == "" {
+		batch = s.id("b")
+	}
 	out := make([]WorkProposal, 0, len(ps))
 	for _, p := range ps {
 		p.ID, p.Batch, p.Status, p.Created = s.id("q"), batch, "open", time.Now()

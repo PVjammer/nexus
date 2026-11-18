@@ -32,7 +32,7 @@ export type Detail = {
 export type Capture = { id: string; text: string; created: string; status: string; proposal?: { project: string; kind: string; title: string; reason?: string }; item?: string };
 export type Item = { id: string; project: string; kind: string; title: string; body?: string; state: string; source: string; created: string };
 export type Task = { id: string; project: string; title: string; brief: string; status: string; summary?: string; report?: string; reports?: string[]; from?: string; reviewed?: boolean; created: string; updated: string };
-export type Need = { id: string; source: string; project?: string; title: string; detail?: string; kind?: string; time: string; report?: string; task?: string; count?: number };
+export type Need = { id: string; source: string; project?: string; title: string; detail?: string; kind?: string; time: string; report?: string; task?: string; count?: number; agent?: string; msg?: number };
 export type Running = { source: string; project?: string; title: string; detail?: string; since: string; task?: string; agent?: string };
 // The home screen is a layout of widgets, stored as data in the core.
 export type LayoutWidget = { id: string; kind: string; shape?: string; scope?: string; plugin?: string; w: number; h?: number; by: "you" | "agent" | "default"; why?: string; added: string };

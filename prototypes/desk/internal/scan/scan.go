@@ -41,6 +41,9 @@ type Result struct {
 	Branches []Finding `json:"branches,omitempty"`
 	Changes  *Finding  `json:"changes,omitempty"`
 	Capped   bool      `json:"capped,omitempty"` // stopped early: a very big folder
+	// Readme is the start of the README: the project's front page, which
+	// often says where things stand ("Status: done, results in ...").
+	Readme string `json:"readme,omitempty"`
 }
 
 // Limits keep a scan quick on big folders.
@@ -86,6 +89,7 @@ var (
 func Project(root string) Result {
 	r := Result{Root: root}
 	root = filepath.Clean(root)
+	r.Readme = readmeHead(root)
 	filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
 		if err != nil {
 			return nil
@@ -242,14 +246,16 @@ func (r *Result) markdown(rel string, b []byte, mod time.Time) {
 
 func itoa(n int) string { return strconv.Itoa(n) }
 
-func git(dir string, args ...string) string {
+func git(dir string, args ...string) string { return strings.TrimSpace(gitRaw(dir, args...)) }
+
+func gitRaw(dir string, args ...string) string {
 	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
 	cmd.Env = append(os.Environ(), "GIT_OPTIONAL_LOCKS=0") // read-only: don't touch the index
 	out, err := cmd.Output()
 	if err != nil {
 		return ""
 	}
-	return strings.TrimSpace(string(out))
+	return string(out)
 }
 
 // git: branches not merged into the main branch, and uncommitted changes.
@@ -279,16 +285,60 @@ func (r *Result) git(root string) {
 			}
 		}
 	}
-	if st := git(root, "status", "--porcelain"); st != "" {
-		files := strings.Split(st, "\n")
+	// -z: entries are NUL-separated and never quoted, and nothing trims the
+	// two-letter status off the first one (TrimSpace on " M x" ate the "d"
+	// of "docker-compose.yml").
+	if st := strings.Trim(gitRaw(root, "status", "--porcelain", "-z"), "\x00"); st != "" {
+		var files []string
+		parts := strings.Split(st, "\x00")
+		for i := 0; i < len(parts); i++ {
+			e := parts[i]
+			if len(e) < 4 {
+				continue
+			}
+			files = append(files, e) // "XY path"
+			if e[0] == 'R' || e[0] == 'C' {
+				i++ // a rename or copy is followed by the old name as a bare path
+			}
+		}
 		names := []string{}
 		for i, f := range files {
 			if i == 5 {
 				names = append(names, "…")
 				break
 			}
-			names = append(names, strings.TrimSpace(f[min(3, len(f)):]))
+			names = append(names, f[3:])
 		}
 		r.Changes = &Finding{Kind: "changes", Text: itoa(len(files)) + " uncommitted changes: " + strings.Join(names, ", "), Where: "working tree (" + git(root, "branch", "--show-current") + ")"}
 	}
+}
+
+// readmeHead is the start of the README as text: up to 30 lines or 1500
+// characters, without code blocks (banners, long examples).
+func readmeHead(root string) string {
+	for _, n := range []string{"README.md", "readme.md", "README", "README.txt"} {
+		b, err := os.ReadFile(filepath.Join(root, n))
+		if err != nil {
+			continue
+		}
+		var out []string
+		size, fence := 0, false
+		for _, line := range strings.Split(string(b), "\n") {
+			t := strings.TrimRight(line, " \t\r")
+			if strings.HasPrefix(strings.TrimSpace(t), "```") {
+				fence = !fence
+				continue
+			}
+			if fence || strings.TrimSpace(t) == "" || strings.HasPrefix(strings.TrimSpace(t), "![") || strings.HasPrefix(strings.TrimSpace(t), "<") {
+				continue
+			}
+			out = append(out, clip(t, 300))
+			if size += len(t); len(out) >= 30 || size > 1500 {
+				out = append(out, "…")
+				break
+			}
+		}
+		return strings.Join(out, "\n")
+	}
+	return ""
 }

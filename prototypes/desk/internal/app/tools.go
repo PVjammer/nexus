@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/pvjammer/nexus/prototypes/desk/internal/actionlog"
 	"github.com/pvjammer/nexus/prototypes/desk/internal/broker"
@@ -320,7 +321,25 @@ func (a *App) CallTool(r *Run, name string, args map[string]any) (string, error)
 	if args == nil {
 		args = map[string]any{}
 	}
+	// One question per turn. Small models fire several ask_user calls (or
+	// keep working) after asking, and the user gets a pile of cards and a
+	// moving target. Once it has asked, the turn is over.
+	r.mu.Lock()
+	asked := r.asked
+	r.mu.Unlock()
+	if asked != "" {
+		return "", fixErr("you already asked %q this turn. End your turn now and write nothing more: the user's answer is your next message, and you can ask your next question then", asked)
+	}
 	out, err := t.run(a, c, args)
+	if name == "ask_user" && err == nil {
+		r.mu.Lock()
+		r.asked = oneLine(sArg(args, "question"), 120)
+		r.mu.Unlock()
+		go func() { // after the tool message is in the transcript
+			time.Sleep(300 * time.Millisecond)
+			a.broadcastDesk()
+		}()
+	}
 	e := actionlog.Entry{Actor: c.Actor, Action: name, Target: logTarget(args), Space: c.Space}
 	if err != nil {
 		e.Detail = err.Error()
@@ -460,6 +479,16 @@ func (a *App) agentPath(c *Ctx, p string) string {
 		}
 	}
 	return p
+}
+
+// notAProjectYet explains an absolute path that isn't inside any project
+// (appPath already maps those that are): during onboarding the home agent
+// tries to read a candidate's README before adding it.
+func notAProjectYet(p string) error {
+	if !strings.HasPrefix(p, "/") && !strings.HasPrefix(p, "~") {
+		return nil
+	}
+	return fixErr("%s isn't in a project, so it can't be read yet. project_discover's readme field has the start of each candidate's README; after project_add, read it as '<project id>/README.md' and fix the brief with project_brief if needed", p)
 }
 
 // canRead: the home agent reads any project; project and task agents read
@@ -634,6 +663,9 @@ func toolProjectBrief(a *App, c *Ctx, m map[string]any) (string, error) {
 
 func toolFilesList(a *App, c *Ctx, m map[string]any) (string, error) {
 	p := a.agentPath(c, sArg(m, "path"))
+	if err := notAProjectYet(p); err != nil {
+		return "", err
+	}
 	if p == "" && c.inProject() {
 		p = c.Project.ID
 	}
@@ -663,6 +695,9 @@ func toolFilesList(a *App, c *Ctx, m map[string]any) (string, error) {
 
 func toolFileRead(a *App, c *Ctx, m map[string]any) (string, error) {
 	p := a.agentPath(c, sArg(m, "path"))
+	if err := notAProjectYet(p); err != nil {
+		return "", err
+	}
 	if err := a.canRead(c, p); err != nil {
 		return "", err
 	}

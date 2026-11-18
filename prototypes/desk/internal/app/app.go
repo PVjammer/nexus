@@ -67,6 +67,11 @@ type App struct {
 	runs    map[string]*Run // by agent id: "home", "p:<project>", "t:<task>"
 	byToken map[string]*Run
 
+	// deskBcast serializes desk broadcasts. Each store change broadcasts
+	// from its own goroutine; without this an older snapshot could reach the
+	// shell after a newer one and leave it showing stale state.
+	deskBcast sync.Mutex
+
 	detMu   sync.Mutex
 	details map[string]projects.Detail
 	detHash string
