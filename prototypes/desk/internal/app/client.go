@@ -552,7 +552,13 @@ func (a *App) handleClient(c *client, m map[string]any, raw []byte) {
 				return
 			}
 			tm = nt
-			a.Store.UpdatePane(pane.ID, you, func(p *store.Pane) error { p.Props["term"] = nt.ID; return nil })
+			a.Store.UpdatePane(pane.ID, you, func(p *store.Pane) error {
+				if p.Props == nil { // a terminal pane opened with no props (the rail's Terminal button)
+					p.Props = map[string]any{}
+				}
+				p.Props["term"] = nt.ID
+				return nil
+			})
 		}
 		reply(map[string]any{"t": "termReady", "pane": pane.ID, "term": tm.ID, "scrollback": string(tm.Scrollback())})
 	case "termInput":

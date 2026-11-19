@@ -581,6 +581,9 @@ func (s *Store) UpdatePane(id string, actor string, f func(p *Pane) error) (Pane
 	if p == nil {
 		return Pane{}, fmt.Errorf("no pane %s", id)
 	}
+	if p.Props == nil { // panes opened with no props (the Terminal button) get them on first change
+		p.Props = map[string]any{}
+	}
 	if err := f(p); err != nil {
 		return Pane{}, err
 	}

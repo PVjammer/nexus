@@ -6,9 +6,11 @@ package app
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -335,7 +337,7 @@ func (a *App) serveWS(w http.ResponseWriter, r *http.Request) {
 		if json.Unmarshal(data, &m) != nil {
 			continue
 		}
-		a.handleClient(c, m, data)
+		a.handleClientSafe(c, m, data)
 	}
 	a.hubMu.Lock()
 	delete(a.clients, c)
@@ -507,4 +509,17 @@ func (a *App) agentName() string {
 		return "no agent"
 	}
 	return a.cfg.Agents.Name()
+}
+
+// handleClientSafe handles one message from the shell. A bug in one handler
+// fails that message only: the connection (and every other button) keeps
+// working, and the shell is told.
+func (a *App) handleClientSafe(c *client, m map[string]any, raw []byte) {
+	defer func() {
+		if e := recover(); e != nil {
+			log.Printf("panic handling %v: %v\n%s", m["t"], e, debug.Stack())
+			a.toast(fmt.Sprintf("Nexus hit a bug handling %v; it was logged. Everything else still works.", m["t"]), "error")
+		}
+	}()
+	a.handleClient(c, m, raw)
 }

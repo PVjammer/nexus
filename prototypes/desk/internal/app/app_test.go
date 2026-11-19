@@ -398,3 +398,20 @@ func TestAddonGatesTools(t *testing.T) {
 		t.Fatal("code tools missing with the add-on on")
 	}
 }
+
+// A terminal pane opened with no props, after a restart (its shell is gone),
+// must get a new shell without breaking anything.
+func TestTerminalPaneWithNoPropsAfterRestart(t *testing.T) {
+	a, _ := newTestApp(t)
+	p, _ := a.Projects.Get("alpha")
+	np, err := a.openPane(p.Space, store.Pane{Kind: "terminal", Title: "Terminal"}, "", "you")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.Store.UpdatePane(np.ID, "you", func(q *store.Pane) error { q.Props["term"] = "t-new"; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if q, _ := a.Store.Pane(np.ID); q.Props["term"] != "t-new" {
+		t.Fatalf("props: %+v", q.Props)
+	}
+}
