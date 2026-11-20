@@ -100,7 +100,7 @@ A **self-hosted, native desktop app** (Linux and Mac, Windows via WSL; where the
 
   Your setup and a company's private cluster or dedicated Azure endpoint are then just different policies. It is the confidentiality half of the FIDES labels.
 - **"Stays local" means no third-party app or document services**, such as Claude Docs. Model endpoints are a separate question, governed by the trust model.
-- **The desktop shell** is a client of the core: Tauri is the leading option, Wails the Go alternative. Other clients (a Hyprland HUD, mobile) use the same contract.
+- **The desktop shell** is a client of the core: Tauri is the leading option, Wails the Go alternative. Other clients (a Hyprland HUD, mobile) use the same contract. The concepts for that contract (sessions and capabilities, attention, surfaces vs arrangement, asks) are in [`frontends.md`](frontends.md).
 
 ### Placement assumptions found and neutralized
 
@@ -146,5 +146,6 @@ A **self-hosted, native desktop app** (Linux and Mac, Windows via WSL; where the
 | `design-candidates.md` | 4 layout candidates and the shared foundation | when choosing a layout |
 | `scenario-week.md` | the one-week walkthrough, 14 break points with plan status, the five tests | skim the tables |
 | `sensitive-agents.md` | the sensitive-agent design, leak paths and a spike | when we get to email |
+| `frontends.md` | one core, many frontends (GUI, web, TUI, CLI, HUD, mobile): the concepts, the gap from desk, a TUI spike | when adding a client |
 | `report.md` §a–c | POC inventory, related projects, prior art | reference |
 | `report.md` §d–f | older revisions of the questions, spikes and extension tiers | history |
