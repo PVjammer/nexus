@@ -101,6 +101,8 @@
 11. **Pins are for you, for now.** You can pin any message, yours or the agent's, to a strip at the top of the chat, so you can keep chatting without scrolling back. A pin doesn't change the agent's context (that could come later).
 12. **Threads are on the backlog** (2026-11-18). A thread branches a conversation at any message, with the history up to that point. The main conversation doesn't move, and the thread can bring back a summary or be dropped. pi already has `--fork`. Threads share their plumbing with episodes (decision 8): both are side conversations that are saved and listed.
 
+13. **Next: channels and mentions** (proposed 2026-11-20). Each workspace's chat becomes a channel with one owner agent; @mentions reach other agents (forked and merged back) and personas. See [Channels and mentions](channels-and-mentions.md) and, for configurable reply formats like tl;dr, [Response styles](response-styles.md).
+
 ## The model
 
 ```
