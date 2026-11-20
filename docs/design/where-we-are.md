@@ -49,6 +49,7 @@ A **self-hosted, native desktop app** (Linux and Mac, Windows via WSL; where the
 - No ambient listening or indexing (calls, texts). **You choose** what the agent sees.
 - Other repo projects (foreman, etc.) inform the design without constraining it.
 - The POC is evidence only. Nothing carries forward by default.
+- **Scheduled jobs (2026-11-20, [`running-docs.md`](running-docs.md) §3A):** a run writes its own versioned output slot directly; one run may start another only through a chain configured in the spec you kept, never by an agent's decision; nothing goes beyond propose-only (no auto-sending, no auto-closing).
 
 ## Principles (current)
 
@@ -147,5 +148,6 @@ A **self-hosted, native desktop app** (Linux and Mac, Windows via WSL; where the
 | `scenario-week.md` | the one-week walkthrough, 14 break points with plan status, the five tests | skim the tables |
 | `sensitive-agents.md` | the sensitive-agent design, leak paths and a spike | when we get to email |
 | `frontends.md` | one core, many frontends (GUI, web, TUI, CLI, HUD, mobile): the concepts, the gap from desk, a TUI spike | when adding a client |
+| `running-docs.md` | running docs and nightly jobs: the building blocks (workflow spec + `on:` / `output:` / `delivery:`), the stance on unattended runs, a build order | when building triggers or workflows |
 | `report.md` §a–c | POC inventory, related projects, prior art | reference |
 | `report.md` §d–f | older revisions of the questions, spikes and extension tiers | history |
