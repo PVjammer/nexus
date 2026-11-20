@@ -23,16 +23,11 @@ func (a *App) Chat(agentID, text, selection, view string) {
 			a.Desk.UpdateTask(t.ID, func(t *desk.Task) error { t.Status = "running"; return nil })
 		}
 	}
-	if ps := a.mentioned(text); len(ps) > 0 && r.Kind != KindPersona { // "@critic, what do you think?"
-		a.callPersonas(r, ps, text, selection, view)
+	if a.mentionChat(r, text, selection, view) { // "@critic, @csv-export: thoughts? Then draft it"
 		return
 	}
 	a.maybeEndEpisode(r, true) // coming back to a settled conversation after a while: start fresh
-	ctx := a.contextFor(r, selection, view)
-	if as := r.takeAside(); as != "" {
-		ctx = as + "\n" + ctx
-	}
-	r.Say(text, ctx)
+	r.sayWith("you", text, a.contextFor(r, selection, view), a.styleTail(r))
 }
 
 // viewProject is the project a view string points at ("w:<ref>", "project
@@ -82,6 +77,14 @@ func (a *App) contextFor(r *Run, selection, view string) string {
 		if note := a.episodesNote(r); note != "" {
 			ctx += "\n" + note
 		}
+	}
+	if r.Kind == KindHome || r.Kind == KindProject || r.Kind == KindWorkstream {
+		if note := a.mentionNote(r); note != "" {
+			ctx += "\n" + note
+		}
+	}
+	if note := a.styleNote(r); note != "" {
+		ctx += "\n" + note
 	}
 	return a.scrub(r.Project, ctx)
 }

@@ -2,11 +2,10 @@
 // "t:<task>"); a ChatPanel shows one of them and can be re-bound.
 
 import { desk, h, on, send } from "./core";
-import { md } from "./md";
 import { proposalChecklist } from "./work";
-import { attachMentions, personaMsg } from "./personas";
+import { askMsg, attachMentions, isPass, joinStrip, passMsg, personaMsg, replyBody, summaryText, xpostMsg } from "./personas";
 
-export type Msg = { id: number; role: string; text: string; tool?: string; args?: string; result?: string; error?: boolean; done?: boolean; callId?: string; author?: string };
+export type Msg = { id: number; role: string; text: string; tool?: string; args?: string; result?: string; error?: boolean; done?: boolean; callId?: string; author?: string; from?: string; late?: boolean };
 
 const transcripts = new Map<string, Msg[]>();
 const busy = new Map<string, boolean>();
@@ -103,8 +102,11 @@ function renderMsg(m: Msg, agent = "", context?: () => { view?: string; selectio
       h("div", { class: "tres" }, m.result || (m.done ? "" : "running…")));
     return el;
   }
-  if (m.role === "agent") return h("div", { class: "msg agent", html: md(m.text) });
-  if (m.role === "persona") return personaMsg(m);
+  if (m.role === "agent" && isPass(m.text)) return passMsg();
+  if (m.role === "agent") return h("div", { class: "msg agent" }, replyBody(m.text, agent, m, !m.done));
+  if (m.role === "persona") return personaMsg(m, agent);
+  if (m.role === "ask") return askMsg(m);
+  if (m.role === "xpost") return xpostMsg(m);
   if (m.role === "thinking") {
     const el = h("div", { class: "msg thinking", title: "Model reasoning (click to expand)", onclick: () => el.classList.toggle("open") }, m.text);
     return el;
@@ -146,14 +148,16 @@ export class MiniChat {
     const sendBtn = h("button", { type: "submit", class: "primary" }, "Ask");
     const form = h("form", { class: "mini-form" }, this.input, sendBtn);
     form.addEventListener("submit", (e) => { e.preventDefault(); this.submit(); });
-    attachMentions(this.input);
+    attachMentions(this.input, () => this.agent);
     this.input.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); this.submit(); } });
     this.input.addEventListener("input", () => { this.input.rows = Math.min(6, Math.max(1, this.input.value.split("\n").length)); });
     this.out = h("div", { class: "mini-out" });
     this.chipsEl = h("div", { class: "chips" });
     this.introEl = h("div", { class: "mini-intro" });
     this.el = h("div", { class: "mini-chat" }, this.introEl, form, this.chipsEl, this.out);
-    this.off = onChat((agent, kind) => { if (agent === this.agent) this.schedule(kind === "delta"); });
+    const offChat = onChat((agent, kind) => { if (agent === this.agent) this.schedule(kind === "delta"); });
+    const offDesk = on("desk", () => this.schedule(false)); // the join strip
+    this.off = () => { offChat(); offDesk(); };
     this.draw();
   }
   destroy() { this.off(); }
@@ -184,8 +188,10 @@ export class MiniChat {
     for (const m of last) {
       if (m.role === "you") kids.push(h("div", { class: "msg you" }, m.text));
       else if (m.role === "app") continue;
-      else if (m.role === "agent" && m.text.trim()) kids.push(h("div", { class: "msg agent", html: md(m.text) }));
-      else if (m.role === "persona") kids.push(personaMsg(m));
+      else if (m.role === "agent" && isPass(m.text)) kids.push(passMsg());
+      else if (m.role === "agent" && m.text.trim()) kids.push(h("div", { class: "msg agent" }, replyBody(m.text, this.agent, m, !m.done)));
+      else if (m.role === "persona") kids.push(personaMsg(m, this.agent));
+      else if (m.role === "ask") kids.push(askMsg(m));
       else if (m.role === "tool" && m.tool === "ask_user" && !m.error) kids.push(questionCard(this.agent, m, this.opts.context));
       else if (m.role === "tool" && m.tool === "work_propose" && m.done && !m.error && proposeCard(m)) kids.push(proposeCard(m)!);
       else if (m.role === "tool") tools.push((m.error ? "⚠ " : "") + (toolLabels[m.tool || ""] || m.tool || "tool"));
@@ -193,6 +199,8 @@ export class MiniChat {
     }
     if (tools.length) kids.splice(1, 0, h("div", { class: "mini-tools muted small" }, "Did: " + tools.join(" · ")));
     if (ended) kids.push(h("div", { class: "episode-div" }, h("span", {}, "Saved · " + ended.text)));
+    const j = joinStrip(this.agent);
+    if (j) kids.push(j);
     if (isBusy(this.agent)) kids.push(h("div", { class: "muted small" }, h("span", { class: "busy-dot" }), " working…", h("button", { type: "button", class: "link", onclick: () => send({ t: "abort", agent: this.agent }) }, "Stop")));
     const talk = (l: Msg[]) => l.filter((m) => m.role === "you" || m.role === "agent" || m.role === "persona").length;
     if (talk(msgs) > talk(last)) kids.push(h("button", { type: "button", class: "link small", onclick: () => this.opts.onHistory?.() }, `Conversation history (${talk(msgs)} messages)`));
@@ -225,7 +233,7 @@ export class ChatPanel {
     const form = h("form", { class: "chat-form" }, this.input,
       h("div", { class: "chat-actions" }, this.status, this.stop, h("button", { type: "submit", class: "primary" }, "Send")));
     form.addEventListener("submit", (e) => { e.preventDefault(); this.submit(); });
-    attachMentions(this.input);
+    attachMentions(this.input, () => this.agent);
     this.input.addEventListener("keydown", (e) => {
       if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); this.submit(); }
     });
@@ -283,7 +291,7 @@ export class ChatPanel {
         el.closest("details")?.setAttribute("open", "");
         el.scrollIntoView({ block: "center", behavior: "smooth" });
         el.classList.add("flash"); setTimeout(() => el.classList.remove("flash"), 1200);
-      } }, (p.role === "you" ? "You: " : "") + p.text),
+      } }, (p.role === "you" ? "You: " : "") + summaryText(p.text)),
       h("button", { class: "ebtn", title: "Unpin", onclick: () => send({ t: "pin", agent: this.agent, msg: p.msg, on: false }) }, "✕"))));
   }
 
@@ -291,9 +299,10 @@ export class ChatPanel {
    *  turn to end. You can let it finish, or interrupt. */
   private drawQueue() {
     const q: { from: string; text: string }[] = ((desk as any)?.queues || {})[this.agent] || [];
-    this.queue.hidden = !q.length;
-    if (!q.length) return;
-    this.queue.replaceChildren(...q.map((m) => h("div", { class: "cq-item" },
+    const join = joinStrip(this.agent);
+    this.queue.hidden = !q.length && !join;
+    if (!q.length) { this.queue.replaceChildren(...(join ? [join] : [])); return; }
+    this.queue.replaceChildren(...(join ? [join] : []), ...q.map((m) => h("div", { class: "cq-item" },
       h("span", { class: "muted small" }, `Waiting for its turn to end · from the ${m.from === "app" ? "app (a hand-off)" : m.from}`),
       h("div", { class: "small" }, m.text.length > 180 ? m.text.slice(0, 180) + "…" : m.text))),
       h("div", { class: "row" }, h("button", { title: "Stop what it's doing so the message goes now", onclick: () => send({ t: "agentInterrupt", agent: this.agent }) }, "Interrupt?"),
@@ -369,7 +378,7 @@ export class ChatPanel {
       for (const m of transcripts.get(this.agent) || []) {
         const el = this.els.get(m.id);
         if (!el) continue;
-        if (m.role === "agent" && el.dataset.len !== String(m.text.length)) { el.innerHTML = md(m.text); el.dataset.len = String(m.text.length); }
+        if (m.role === "agent" && el.dataset.len !== String(m.text.length)) { const n = this.render(m); n.dataset.len = String(m.text.length); el.replaceWith(n); this.els.set(m.id, n); }
         if (m.role === "thinking") el.textContent = m.text;
       }
       this.log.scrollTop = this.log.scrollHeight;

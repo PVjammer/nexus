@@ -143,30 +143,6 @@ func (a *App) mentioned(text string) []Persona {
 
 // ---- in a chat ----
 
-// callPersonas handles a message that @mentions personas: it goes into the
-// chat as yours, each persona answers under it, and the chat's agent hears
-// about it on its next turn.
-func (a *App) callPersonas(owner *Run, ps []Persona, text, selection, view string) {
-	you := owner.add(ChatMsg{Role: "you", Text: text})
-	owner.addAside(you)
-	for _, p := range ps {
-		ph := owner.add(ChatMsg{Role: "persona", Author: p.Handle, Text: ""})
-		go func(p Persona, ph ChatMsg) {
-			ans, err := a.personaAnswer(owner, p, text, selection, view)
-			ph.Done = true
-			if err != nil {
-				ph.Text, ph.Error = err.Error(), true
-			} else {
-				ph.Text = ans
-			}
-			owner.updateMsg(ph)
-			if !ph.Error {
-				owner.addAside(ph)
-			}
-		}(p, ph)
-	}
-}
-
 // personaAnswer runs the persona once and returns what it said.
 func (a *App) personaAnswer(owner *Run, p Persona, text, selection, view string) (string, error) {
 	if a.cfg.Agents == nil {
@@ -199,7 +175,7 @@ func (a *App) personaAnswer(owner *Run, p Persona, text, selection, view string)
 		chat = transcriptText(said, 40000)
 	}
 	prompt := fmt.Sprintf("<what-the-app-knows note=\"background\">\n%s\n</what-the-app-knows>\n\n<chat with=%q note=\"the conversation you were called into; 'agent' is the %s, not you\">\n%s\n</chat>\n\nThe user's message to you, @%s. Answer it; what to judge is in it or in the chat above:\n\n%s",
-		a.contextFor(owner, selection, view), owner.label(), owner.label(), chat, p.Handle, text)
+		withoutStyle(a.contextFor(owner, selection, view)), owner.label(), owner.label(), chat, p.Handle, text)
 	done := r.turnWaiter()
 	if err := r.sayAs("app", prompt, ""); err != nil {
 		return "", err
@@ -273,8 +249,11 @@ func personaInstructions(p *Persona) string {
 }
 
 func (a *App) instructionsForRun(r *Run) string {
-	if r.Kind == KindPersona {
-		return personaInstructions(r.persona)
+	switch r.Kind {
+	case KindPersona:
+		return personaInstructions(r.persona) + a.styleInstructions("persona:"+r.persona.Handle)
+	case KindFork: // a side session is the agent itself
+		return a.instructionsFor(r.trunkKind)
 	}
 	return a.instructionsFor(r.Kind)
 }
@@ -282,7 +261,12 @@ func (a *App) instructionsForRun(r *Run) string {
 // base: a persona reads and runs as the chat it was called into: home's
 // in home (and the quick window), a project agent's in a project.
 func (r *Run) base() string {
-	if r.Kind != KindPersona {
+	switch {
+	case r.Kind == KindFork && r.trunkKind == KindHome:
+		return KindHome
+	case r.Kind == KindFork:
+		return KindProject
+	case r.Kind != KindPersona:
 		return ""
 	}
 	if r.Project == "" {
@@ -325,13 +309,16 @@ func (r *Run) takeAside() string {
 		return ""
 	}
 	var b strings.Builder
-	b.WriteString("<aside note=\"the user called other voices into this chat since your last turn; you didn't answer these, but you can build on them\">\n")
+	b.WriteString("<aside note=\"said in this chat, or asked of you, since your last turn; you didn't answer these here, but you can build on them\">\n")
 	for _, m := range as {
-		who := "user"
-		if m.Role == "persona" {
-			who = "@" + m.Author
+		switch m.Role {
+		case "persona": // a summary: the details are in the chat
+			fmt.Fprintf(&b, "[@%s] %s\n", m.Author, summaryOf(m.Text, 1500))
+		case "merge":
+			fmt.Fprintf(&b, "[side session] %s\n", m.Text)
+		default:
+			fmt.Fprintf(&b, "[user] %s\n", truncate(m.Text, 4000))
 		}
-		fmt.Fprintf(&b, "[%s] %s\n", who, truncate(m.Text, 4000))
 	}
 	b.WriteString("</aside>")
 	return b.String()

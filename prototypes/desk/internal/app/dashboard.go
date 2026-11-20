@@ -136,7 +136,7 @@ func (a *App) deskMsg() map[string]any {
 		"t": "desk", "desk": a.Desk.Snapshot(), "projects": a.allDetails(),
 		"needs": a.needs(), "running": a.running(), "wikis": wikis, "addons": addons,
 		"homeKinds": shellCatalog(), "homeUndo": a.homeUndoInfo(), "workItems": a.workItems(), "wipLimit": a.Desk.WipLimit(),
-		"customizer": a.customizerState(), "queues": a.queues(), "personas": a.personas(),
+		"customizer": a.customizerState(), "queues": a.queues(), "personas": a.personas(), "handles": a.handles(), "joins": a.joins(), "styles": a.styles(),
 	}
 }
 

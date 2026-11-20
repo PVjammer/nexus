@@ -12,7 +12,10 @@ import (
 var jsonBlock = regexp.MustCompile("(?s)```json\n(.*?)```")
 
 // exampleAgent: which agent a skill's examples run as (default home).
-var exampleAgent = map[string]string{"onboarding": "p:alpha", "closeout": "closeout"}
+var exampleAgent = map[string]string{"onboarding": "p:alpha", "closeout": "closeout", "mentions": "p:alpha"}
+
+// exampleLoops: skills whose examples need agents that answer (fake ones here).
+var exampleLoops = map[string]bool{"mentions": true}
 
 // TestSkillExamples runs every example tool call in every skill against the
 // real tools, so a skill can't teach a call the code no longer accepts.
@@ -44,6 +47,9 @@ func TestSkillExamples(t *testing.T) {
 			// Examples name a work item by title; it exists in the fixture.
 			if _, err := a.workItemAdd("you", "alpha", "Add CSV export", "", true); err != nil {
 				t.Fatal(err)
+			}
+			if exampleLoops[name] {
+				withFakeLoops(t, a)
 			}
 			agent := exampleAgent[name]
 			if agent == "" {

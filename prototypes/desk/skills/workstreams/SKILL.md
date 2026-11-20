@@ -13,12 +13,13 @@ Every work item in progress has a **workstream**: its own agent and its own conv
 |---|---|
 | where it stands, in general | answer from its line in your context; it's usually enough |
 | something specific it said or decided | `ws_transcript` with a `query`, or `ws_ask` with the question |
+| several agents' views, or a discussion | `ask_agents` (see the mentions skill) |
 | the latest of its conversation | `ws_transcript` with no query (the newest 20 messages) |
 | it to do something | `ws_message` with what to do; it does it in its own conversation |
 | a change to its tasks or items | do it yourself with the `work_*` tools; its agent is told at its next turn |
 
 - **Read in pieces.** `ws_transcript` returns a window and says how to get more ("from=21 for the next"). Search before you page.
-- **`ws_ask`** gives the question to a reader that has the workstream's whole conversation, and returns its answer in a few lines. Call it as `ws_ask` with `item` and `question`. It takes a minute, so use it for questions a search can't answer ("why did it pick Postgres?").
+- **`ws_ask`** asks the workstream's agent itself, from a side session: it answers with everything it knows, keeps working meanwhile, and remembers being asked. Call it as `ws_ask` with `item` and `question`. It takes a minute, so use it for questions a search can't answer ("why did it pick Postgres?").
 - **`ws_message` waits for its turn.** If the workstream agent is mid-turn, your message waits until the turn ends. The user can interrupt it. Tell the user it's queued, in one line.
 - **Changes reach the agents.** When you, the user or a quick ask change a workstream's tasks, or files change in the project, its agent gets a short "since your last turn" note. You get one too: start from it.
 

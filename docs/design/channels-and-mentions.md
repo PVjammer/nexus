@@ -1,6 +1,6 @@
 # Channels and mentions
 
-*Proposed 2026-11-20, for the next design review. Builds on [Workspaces and agents](workspaces-and-agents.md) and the personas POC (branch `personas`).*
+*Proposed 2026-11-20. Steps 1 to 3 of the build order are built on branch `personas` (2026-11-20); the data model (step 4) is next. Builds on [Workspaces and agents](workspaces-and-agents.md).*
 
 ## The problem
 
@@ -76,8 +76,11 @@ Each one against the model: simpler, same or harder.
 The personas POC already has one-off voices, the aside and the @ menu.
 
 1. **The join, for your example message:** parallel fan-out, the owner's turn after it, PASS with the visible pass line, late-reply chips. Evals: pass vs act; don't act on unrequested feedback; tagging always gets a response.
+   *Built 2026-11-20.* Handles: personas by name, project agents by project id, workstreams by the first three words of their title (`add-csv-export`). The join waits up to 4 minutes. On local Qwen the owner first acted on the critic's points instead of passing; the join prompt now makes "was anything asked of *you*?" the first decision.
 2. **Fork-and-merge for workstreams:** @workstream in a project chat; the fork answers there; the merge after the trunk's turn; the cross-post. On pi first.
+   *Built 2026-11-20,* for project agents and home too. pi forks a copy of the session cut at its last finished turn (`--fork`); Claude Code uses `--resume --fork-session`. The correction on a stale answer is left to the agent: the merge says which turn the fork started from and asks it to say so if its work changed the answer.
 3. **Agent-initiated mentions:** the `ask_agents` rounds tool replaces `ws_ask` and `ws_message`. Evals: ordered vs parallel.
+   *Built 2026-11-20.* `ws_ask` now answers from a fork. `ws_message` stays for now: it's an instruction, which goes to the real session anyway.
 4. **The data model:** a Channel with members, cursors and authored messages. Each existing chat becomes a channel whose owner is its agent, with no visible change. Task agents move under their workstream.
 5. **Threads** (backlog): a thread is a channel branch; forks and threads share plumbing.
 6. **A messaging-style client**, once 4 holds.

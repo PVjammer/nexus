@@ -20,6 +20,8 @@ type fakeLoops struct {
 	specs   map[string]RunSpec
 	prompts map[string][]string
 	reply   func(s RunSpec, prompt string) string
+	delay   func(s RunSpec) time.Duration
+	script  func(s RunSpec, prompt string) []agent.Event // events for a turn, instead of one reply
 }
 
 func (f *fakeLoops) Name() string { return "fake" }
@@ -61,7 +63,16 @@ func (b *fakeBackend) Prompt(_ context.Context, msg string) error {
 	b.f.prompts[b.spec.ID] = append(b.f.prompts[b.spec.ID], msg)
 	b.f.mu.Unlock()
 	go func() {
-		b.ev <- agent.Event{Type: agent.EventDelta, Text: b.f.reply(b.spec, msg)}
+		if d := b.f.delay; d != nil {
+			time.Sleep(d(b.spec))
+		}
+		if b.f.script != nil {
+			for _, e := range b.f.script(b.spec, msg) {
+				b.ev <- e
+			}
+		} else {
+			b.ev <- agent.Event{Type: agent.EventDelta, Text: b.f.reply(b.spec, msg)}
+		}
 		b.ev <- agent.Event{Type: agent.EventTurnEnd}
 	}()
 	return nil
@@ -73,14 +84,24 @@ func (b *fakeBackend) Name() string               { return "fake" }
 
 func withFakeLoops(t *testing.T, a *App) *fakeLoops {
 	f := &fakeLoops{specs: map[string]RunSpec{}, prompts: map[string][]string{}, reply: func(s RunSpec, p string) string {
-		if s.Kind == KindPersona {
+		switch {
+		case s.Kind == KindPersona:
 			return "Verdict from " + s.ID[:strings.LastIndex(s.ID, ":")]
+		case s.Kind == KindFork && strings.Contains(p, "UTF-8"):
+			return "Not yet. I'll add it.\nACTION: add a UTF-8 test"
+		case s.Kind == KindFork:
+			return "From the side: we're on step 2"
+		case strings.Contains(p, "<mentioned-replies") && strings.Contains(p, "write it up"):
+			return "Here's the draft"
+		case strings.Contains(p, "<mentioned-replies"):
+			return "PASS"
 		}
 		return "ok"
 	}}
 	a.cfg.Agents = f
 	a.cfg.PersonasDir = "../../personas"
 	a.cfg.SkillsDir = "../../skills"
+	a.cfg.StylesDir = "../../styles"
 	return f
 }
 
@@ -126,9 +147,9 @@ func TestPersonasLoadAndMentions(t *testing.T) {
 	}
 }
 
-// TestPersonaInChat: "@critic ..." goes to the critic, not the chat's agent;
-// the critic sees the chat so far; its answer lands in the chat under its
-// name; and the chat's agent hears about it on its next turn.
+// TestPersonaInChat: "@critic ..." goes to the critic; the critic sees the
+// chat so far; its answer lands in the chat under its name; then the chat's
+// agent gets one turn with the reply, and passes when nothing was asked of it.
 func TestPersonaInChat(t *testing.T) {
 	a, _ := newTestApp(t)
 	f := withFakeLoops(t, a)
@@ -137,25 +158,33 @@ func TestPersonaInChat(t *testing.T) {
 	waitFor(t, "the project agent's reply", func() bool { return r.lastAgentText() == "ok" })
 
 	a.Chat("p:alpha", "@critic, what's wrong with this plan?", "", "")
-	waitFor(t, "the critic's answer", func() bool {
-		msgs, _ := r.history()
-		m := msgs[len(msgs)-1]
-		return m.Role == "persona" && m.Done
-	})
+	waitFor(t, "the project agent's turn after the critic", func() bool { _, ps, _ := f.seen("p:alpha"); return len(ps) == 2 && !r.isBusy() })
 	msgs, _ := r.history()
-	m := msgs[len(msgs)-1]
-	if m.Author != "critic" || m.Text != "Verdict from persona:critic" || m.Error {
-		t.Fatalf("the critic's message: %+v", m)
+	var critic ChatMsg
+	for _, m := range msgs {
+		if m.Role == "persona" {
+			critic = m
+		}
 	}
-	if _, ps, _ := f.seen("p:alpha"); len(ps) != 1 {
-		t.Fatalf("the project agent mustn't get the @ message: %q", ps)
+	if critic.Author != "critic" || critic.Text != "Verdict from persona:critic" || critic.Error || !critic.Done {
+		t.Fatalf("the critic's message: %+v", critic)
 	}
-	spec, ps, ok := f.started("persona:critic:")
+	_, ps, _ := f.seen("p:alpha")
+	if !strings.Contains(ps[1], "[@critic] Verdict from persona:critic") || !strings.Contains(ps[1], "reply with exactly PASS") || !strings.Contains(ps[1], "@critic, what's wrong with this plan?") {
+		t.Fatalf("the project agent's turn after the join:\n%s", ps[1])
+	}
+	if last := msgs[len(msgs)-1]; last.Role != "agent" || last.Text != "PASS" {
+		t.Fatalf("nothing was asked of it, so it passes: %+v", last)
+	}
+	spec, cps, ok := f.started("persona:critic:")
 	if !ok || spec.Kind != KindPersona || !strings.Contains(spec.Instructions, "You are @critic") || !strings.Contains(spec.Instructions, "not a contrarian") {
 		t.Fatalf("the critic's start: %+v", spec)
 	}
-	if len(ps) != 1 || !strings.Contains(ps[0], "no tests") || !strings.HasSuffix(ps[0], "@critic, what's wrong with this plan?") || !strings.Contains(ps[0], "<what-the-app-knows") {
-		t.Fatalf("the critic's prompt has the chat and the call last:\n%s", ps)
+	if !strings.Contains(spec.Instructions, "The app shows it as a badge") {
+		t.Fatalf("the verdict style is on for the critic: %s", spec.Instructions)
+	}
+	if len(cps) != 1 || !strings.Contains(cps[0], "no tests") || !strings.HasSuffix(cps[0], "@critic, what's wrong with this plan?") || !strings.Contains(cps[0], "<what-the-app-knows") {
+		t.Fatalf("the critic's prompt has the chat and the call last:\n%s", cps)
 	}
 	if a.existingRun(spec.ID) != nil {
 		t.Fatal("a persona is discarded after it answers")
@@ -163,17 +192,10 @@ func TestPersonaInChat(t *testing.T) {
 	if _, err := os.Stat(a.chatPath(spec.ID)); err == nil {
 		t.Fatal("nor is its own transcript kept")
 	}
-
 	a.Chat("p:alpha", "ok, fix the worst one", "", "")
-	waitFor(t, "the project agent's turn", func() bool { _, ps, _ := f.seen("p:alpha"); return len(ps) == 2 })
-	_, ps, _ = f.seen("p:alpha")
-	if !strings.Contains(ps[1], "<aside") || !strings.Contains(ps[1], "[@critic] Verdict from persona:critic") || !strings.Contains(ps[1], "[user] @critic, what's wrong") {
-		t.Fatalf("the project agent hears what it missed:\n%s", ps[1])
-	}
-	a.Chat("p:alpha", "and?", "", "")
-	waitFor(t, "the third turn", func() bool { _, ps, _ := f.seen("p:alpha"); return len(ps) == 3 })
+	waitFor(t, "the next turn", func() bool { _, ps, _ := f.seen("p:alpha"); return len(ps) == 3 })
 	if _, ps, _ = f.seen("p:alpha"); strings.Contains(ps[2], "<aside") {
-		t.Fatal("only once")
+		t.Fatalf("it already had the reply in its turn after the join:\n%s", ps[2])
 	}
 }
 

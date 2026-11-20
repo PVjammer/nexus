@@ -65,11 +65,23 @@ func (f piFactory) Start(ctx context.Context, s app.RunSpec) (agent.Backend, err
 		os.Rename(sessDir, sessDir+"-"+time.Now().Format("20060102-150405"))
 	}
 	prior, _ := filepath.Glob(filepath.Join(sessDir, "*.jsonl"))
-	sys, err := composeInstructions(f.dataDir, safe, promptFile(f.piDir, s.Kind), s.Instructions)
+	sys, err := composeInstructions(f.dataDir, safe, promptFor(f.piDir, s), s.Instructions)
 	if err != nil {
 		return nil, err
 	}
+	fork := ""
+	if s.ForkOf != "" { // a side session: a copy of the agent's, cut at its last finished turn
+		trunk := filepath.Join(f.dataDir, "pi-sessions", strings.NewReplacer(":", "-", "/", "-").Replace(s.ForkOf))
+		if latest := newest(filepath.Join(trunk, "*.jsonl")); latest != "" {
+			os.MkdirAll(filepath.Join(f.dataDir, "pi-forks"), 0o700)
+			src := filepath.Join(f.dataDir, "pi-forks", safe+".jsonl")
+			if ok, err := agent.ForkSource(latest, src); err == nil && ok {
+				fork = src
+			}
+		}
+	}
 	p := agent.NewPi(agent.PiConfig{
+		Fork:     fork,
 		Continue: len(prior) > 0, // an agent that was stopped picks up where it left off
 		Binary:   f.bin, Model: or(s.Model, f.modelFor(loopKind(s))), Extension: f.ext,
 		SystemExtra:  sys,
@@ -139,7 +151,7 @@ func (f claudeFactory) Start(ctx context.Context, s app.RunSpec) (agent.Backend,
 	if err := os.MkdirAll(cwd, 0o700); err != nil {
 		return nil, err
 	}
-	sys, err := composeInstructions(f.dataDir, "claude-"+safe, promptFile(f.piDir, s.Kind), claudeNote+"\n\n"+s.Instructions)
+	sys, err := composeInstructions(f.dataDir, "claude-"+safe, promptFor(f.piDir, s), claudeNote+"\n\n"+s.Instructions)
 	if err != nil {
 		return nil, err
 	}
@@ -157,12 +169,18 @@ func (f claudeFactory) Start(ctx context.Context, s app.RunSpec) (agent.Backend,
 	if s.Fresh { // a new episode: a new conversation (the old one stays in Claude Code's history)
 		os.Remove(sessFile)
 	}
-	sid, resume := "", false
-	if b, err := os.ReadFile(sessFile); err == nil {
+	sid, resume, fork := "", false, false
+	if s.ForkOf != "" { // a side session: a copy of the agent's conversation
+		tf := filepath.Join(f.dataDir, "claude", strings.NewReplacer(":", "-", "/", "-").Replace(s.ForkOf), "session")
+		if b, err := os.ReadFile(tf); err == nil && claudeSessionExists(strings.TrimSpace(string(b))) {
+			sid, resume, fork = strings.TrimSpace(string(b)), true, true
+		}
+	}
+	if fork {
+		// the copy gets its own id from Claude Code; nothing to record
+	} else if b, err := os.ReadFile(sessFile); err == nil {
 		sid = strings.TrimSpace(string(b))
-		home, _ := os.UserHomeDir()
-		found, _ := filepath.Glob(filepath.Join(home, ".claude", "projects", "*", sid+".jsonl"))
-		resume = len(found) > 0
+		resume = claudeSessionExists(sid)
 	}
 	if !resume {
 		sid = newUUID()
@@ -171,13 +189,34 @@ func (f claudeFactory) Start(ctx context.Context, s app.RunSpec) (agent.Backend,
 	os.MkdirAll(filepath.Join(f.dataDir, "agent-wire"), 0o700)
 	c := agent.NewClaude(agent.ClaudeConfig{
 		Binary: f.bin, Model: or(s.Model, f.modelFor(loopKind(s))), SystemFile: sys, MCPConfig: mcp,
-		SessionID: sid, Resume: resume, WorkDir: cwd,
+		SessionID: sid, Resume: resume, Fork: fork, WorkDir: cwd,
 		WireLog: filepath.Join(f.dataDir, "agent-wire", "claude-"+safe+".log"),
 	})
 	if err := c.Start(ctx); err != nil {
 		return nil, err
 	}
 	return c, nil
+}
+
+func claudeSessionExists(sid string) bool {
+	if sid == "" {
+		return false
+	}
+	home, _ := os.UserHomeDir()
+	found, _ := filepath.Glob(filepath.Join(home, ".claude", "projects", "*", sid+".jsonl"))
+	return len(found) > 0
+}
+
+// newest is the most recently changed file matching the pattern, or "".
+func newest(pattern string) string {
+	fs, _ := filepath.Glob(pattern)
+	best, at := "", time.Time{}
+	for _, f := range fs {
+		if st, err := os.Stat(f); err == nil && st.ModTime().After(at) {
+			best, at = f, st.ModTime()
+		}
+	}
+	return best
 }
 
 // loopKind: whose loop and model an agent runs on.
@@ -226,6 +265,17 @@ func promptFile(dir, kind string) string {
 	return p
 }
 
+// promptFor: the kind's own prompt, else the prompt of the loop it runs on
+// (a fork of a workstream reads the project agent's).
+func promptFor(dir string, s app.RunSpec) string {
+	if p := filepath.Join(dir, s.Kind+".md"); fileExists(p) {
+		return p
+	}
+	return promptFile(dir, loopKind(s))
+}
+
+func fileExists(p string) bool { _, err := os.Stat(p); return err == nil }
+
 // mixFactory picks the agent loop per agent kind (home, project, task).
 type mixFactory struct {
 	byKind map[string]app.AgentFactory
@@ -267,6 +317,7 @@ func main() {
 	webDir := flag.String("web", "web", "web assets directory")
 	skillsDir := flag.String("skills", "skills", "agent skills directory (SKILL.md per skill)")
 	personasDir := flag.String("personas", "personas", "shipped personas directory (<handle>.md each); yours are in <data>/personas")
+	stylesDir := flag.String("styles", "styles", "shipped reply styles directory (<name>.md each); yours are in <data>/styles")
 	agentKind := flag.String("agent", "pi", "agent loop for every agent: pi | claude | none")
 	agentHome := flag.String("agent-home", "", "agent loop for the home agent (overrides -agent): pi | claude")
 	agentProject := flag.String("agent-project", "", "agent loop for project agents: pi | claude")
@@ -297,7 +348,7 @@ func main() {
 	v, err := vault.Open(*vaultPath)
 	must(err)
 
-	cfg := app.Config{DataDir: *dataDir, WebDir: *webDir, SkillsDir: *skillsDir, PersonasDir: *personasDir, Token: token, ScanRoots: scan, TestHooks: *testHooks, Foreman: *foreman}
+	cfg := app.Config{DataDir: *dataDir, WebDir: *webDir, SkillsDir: *skillsDir, PersonasDir: *personasDir, StylesDir: *stylesDir, Token: token, ScanRoots: scan, TestHooks: *testHooks, Foreman: *foreman}
 	if *agentKind != "none" || *agentHome != "" || *agentProject != "" || *agentTask != "" {
 		ext, _ := filepath.Abs("pi/nexus-tools.ts")
 		piDir, _ := filepath.Abs("pi")

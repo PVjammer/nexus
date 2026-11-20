@@ -31,6 +31,7 @@ type ClaudeConfig struct {
 	MCPConfig  string // JSON file declaring the "nexus" MCP server
 	SessionID  string // conversation id (UUID)
 	Resume     bool   // continue SessionID instead of starting it
+	Fork       bool   // with Resume: start a copy of SessionID (a side session) instead of continuing it
 	WorkDir    string // an empty folder; tools reach files through Nexus, not the cwd
 	Env        []string
 	WireLog    string
@@ -88,6 +89,9 @@ func (c *Claude) Args() []string {
 	if c.cfg.SessionID != "" {
 		if c.cfg.Resume {
 			args = append(args, "--resume", c.cfg.SessionID)
+			if c.cfg.Fork {
+				args = append(args, "--fork-session")
+			}
 		} else {
 			args = append(args, "--session-id", c.cfg.SessionID)
 		}

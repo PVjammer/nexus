@@ -38,6 +38,7 @@ type Config struct {
 	WebDir      string
 	SkillsDir   string   // agent skills (default "skills")
 	PersonasDir string   // shipped personas (default "personas")
+	StylesDir   string   // shipped reply styles (default "styles")
 	Token       string   // the shell's websocket token
 	ScanRoots   []string // where onboarding looks for projects
 	Agents      AgentFactory

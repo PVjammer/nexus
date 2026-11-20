@@ -290,6 +290,8 @@ func (a *App) handleClient(c *client, m map[string]any, raw []byte) {
 			break
 		}
 		a.endEpisode(r, str(m["summary"]))
+	case "joinGo": // go without the agents that haven't answered yet
+		a.joinGo(str(m["agent"]))
 	case "agentInterrupt":
 		if err := a.interrupt(str(m["agent"])); err != nil {
 			fail(err)

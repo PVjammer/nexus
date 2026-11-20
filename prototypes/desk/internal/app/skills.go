@@ -17,9 +17,9 @@ import (
 
 // skillsByKind says which skills each agent gets.
 var skillsByKind = map[string][]string{
-	KindHome:       {"home-layout", "tasks", "personas"},
-	KindProject:    {"onboarding", "tasks", "workstreams"},
-	KindWorkstream: {"onboarding", "tasks"},
+	KindHome:       {"home-layout", "tasks", "personas", "styles", "mentions"},
+	KindProject:    {"onboarding", "tasks", "workstreams", "mentions"},
+	KindWorkstream: {"onboarding", "tasks", "mentions"},
 	KindCustomizer: {"home-layout"},
 }
 

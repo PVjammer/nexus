@@ -24,6 +24,13 @@ const wt = (d) => d.desk.workTasks || [];
 const find = (l, k) => (l.widgets || []).find((w) => w.kind === k);
 const csv = (d) => (d.workItems || []).find((w) => w.title === "Add CSV export");
 const openProps = (d) => (d.desk.proposals || []).filter((q) => q.status === "open");
+const isPass = (t) => (t || "").replace(/[^A-Za-z]/g, "").toUpperCase() === "PASS";
+// ordered: in ask_agents, a was asked in an earlier round (or call) than b.
+const ordered = (msgs, a, b) => {
+  const calls = msgs.filter((m) => m.role === "tool" && m.tool === "ask_agents");
+  const at = (h) => { let k = 0; for (const c of calls) { let rs = []; try { rs = JSON.parse(c.args || "{}").rounds || []; } catch {} for (const r of rs) { if (r.some((q) => (q.to || "").replace("@", "") === h)) return k; k++; } } return -1; };
+  return at(a) >= 0 && at(b) > at(a);
+};
 const cases = [
   { name: "add-needs", start: "prompt", say: ["Put what needs me on my home screen, right under this box."],
     check: (l) => kinds(l)[0] === "chat" && kinds(l)[1] === "needs" },
@@ -72,11 +79,28 @@ const cases = [
     check: (l, b, r, d) => wt(d).some((t) => t.item === csv(d)?.ref && /review/i.test(t.title)), why: "\"here\" is the workstream the quick window was opened from" },
   { name: "episode-close", start: "prompt", say: ["Add a todo: buy printer ink."],
     check: (l, b, r, d, tools) => wt(d).some((t) => !t.item && /ink/i.test(t.title)) && tools.includes("episode_close"), why: "a request done is an episode done: it says so with a summary" },
-  // personas: "@critic" answers in the chat's place, in its brief's voice; it finds a real flaw and doesn't invent one
+  // personas: "@critic" answers in its brief's voice; it finds a real flaw and doesn't invent one
   { name: "critic-flaw", persona: true, start: "prompt", say: ["Plan for the CSV export: I'll query the production database directly from the export button, skip tests since it's small, and ship it Friday. @critic, thoughts?"],
     check: (l, b, r, d) => /prod|test|direct/i.test(r) && !/holds up/i.test(r.slice(0, 80)), why: "the critic names a planted flaw (the production DB, no tests) and doesn't pass it" },
   { name: "critic-fine", persona: true, start: "prompt", say: ["Plan: add a Download CSV button to the orders admin page. It exports the current filtered view from the read replica, streams rows so big exports don't time out, caps at 100k rows with a message when it hits the cap, and has a unit test for the column mapping. Finance has signed off on the columns. @critic, anything wrong with this?"],
     check: (l, b, r, d) => /holds up/i.test(r.slice(0, 80)), why: "a sound plan gets \"This holds up.\", not invented problems" },
+  // mentions: the chat's agent waits for the mentioned agents, then acts or passes (channels-and-mentions.md)
+  { name: "join-pass", agent: "p:demo", start: "prompt", say: ["@critic, thoughts on this plan: add a Download CSV button to the orders admin page that exports the current filtered view, with a unit test for the column mapping."],
+    check: (l, b, r, d, tools, x) => x.persona.critic && isPass(x.owner), why: "nothing was asked of the project agent, so it passes" },
+  { name: "join-draft", agent: "p:demo", start: "prompt", say: ["Plan: the export button queries the production database directly, no tests, ship Friday. @critic, any issues? Then fold the feedback in and write me a revised plan."],
+    check: (l, b, r, d, tools, x) => x.persona.critic && !isPass(x.owner) && x.owner.length > 200 && /test|replica|staging|read-only/i.test(x.owner), why: "it waits for the critic, then writes the revised plan" },
+  { name: "feedback-no-act", agent: "p:demo", start: "prompt", seed: true, say: ["@critic, is \"Add CSV export\" set up sensibly? I just want its take for now."],
+    check: (l, b, r, d, tools, x) => x.persona.critic && !tools.some((t) => /^(work_|item_|wiki_write)/.test(t)), why: "feedback is information: the project agent changes nothing it wasn't asked to" },
+  { name: "tagged-rounds", agent: "p:demo", start: "prompt", say: ["@demo, ask @critic for a verdict on this plan first, then ask @pessimist for the biggest risk given the critic's verdict, then give me a two-line summary. Plan: the export button queries production directly, no tests, ship Friday."],
+    check: (l, b, r, d, tools, x) => x.persona.critic && x.persona.pessimist && ordered(x.msgs, "critic", "pessimist") && x.owner.length > 20, why: "it runs the asks itself, the pessimist after the critic" },
+  { name: "ws-mention", agent: "p:demo", start: "prompt", seed: true, say: ["@add-csv-export what's your next step?"],
+    check: (l, b, r, d, tools, x) => !!x.persona["add-csv-export"] && x.msgs.some((m) => m.role === "persona" && m.from?.startsWith("w:") && !m.error), why: "the workstream answers in the project chat, from a side session" },
+  // reply styles
+  { name: "style-on", start: "prompt", say: ["Turn on tl;dr mode for my project chats."],
+    check: (l, b, r, d) => (d.styles || []).some((s) => s.name === "tldr" && s.enabled && s.applies.includes("project")), why: "home switches the tl;dr style on for project chats" },
+  { name: "tldr-reply", agent: "p:demo", start: "prompt", files: { "data/styles/tldr.md": "---\ntitle: tl;dr first\napplies: project, workstream\nrender: collapse\nenabled: true\n---\n\nYour answer (after any tool calls, so write nothing before them) starts with a tl;dr: one or two plain sentences that say the answer or the outcome, enough to act on without reading further. If there's more, put a line with only `---` after it, then the details. An answer that's already short needs no details and no `---`.\n" },
+    say: ["Explain what this project is and how it's laid out, and what you'd look at first."],
+    check: (l, b, r, d, tools, x) => { const last = x.msgs.filter((m) => m.role === "agent" && m.text.trim()).pop()?.text || ""; const i = last.search(/^\s*---\s*$/m); return i > 0 && i < 400; }, why: "the final answer: a short tl;dr, a --- line, then the details" },
   // the customizer: small changes apply at once, builds wait for Keep
   { name: "eitri-small", agent: "customizer", start: "dashboard", say: ["Make the needs list compact."],
     check: (l, b, r, d) => find(l, "needs")?.shape === "compact" && d.customizer?.state === "idle", why: "a small change goes live when the turn ends" },
@@ -93,8 +117,9 @@ const results = [];
 for (const c of cases) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nexus-eval-"));
   fs.cpSync(path.join(root, "testdata/project"), path.join(dir, "proj"), { recursive: true });
+  for (const [f, body] of Object.entries(c.files || {})) { fs.mkdirSync(path.dirname(path.join(dir, f)), { recursive: true }); fs.writeFileSync(path.join(dir, f), body); }
   const addr = `127.0.0.1:${port++}`;
-  const loop = model.startsWith("claude") ? ["-agent", "claude", ...(model.includes(":") ? ["-claude-model-home", model.split(":")[1]] : [])] : ["-agent", "pi", "-model-home", model];
+  const loop = model.startsWith("claude") ? ["-agent", "claude", ...(model.includes(":") ? ["-claude-model-home", model.split(":")[1]] : [])] : ["-agent", "pi", "-model", model];
   const core = spawn(path.join(root, "bin/nexus-core"), ["-data", path.join(dir, "data"), "-addr", addr, ...loop,
     "-scan", dir, "-project", `Demo=${path.join(dir, "proj")}`, "-skills", path.join(root, "skills"), "-web", path.join(root, "web")], { cwd: root, stdio: ["ignore", "ignore", fs.openSync(path.join(dir, "core.log"), "w")] });
   const t0 = Date.now();
@@ -132,24 +157,24 @@ for (const c of cases) {
     await sleep(400);
     const before = JSON.parse(JSON.stringify(desk.desk.layouts.home));
     const point = c.point ? find(before, c.point)?.id || "" : "";
-    const answered = () => msgs.filter((m) => m.role === "persona" && m.done).length;
     for (const text of c.say) {
-      const want = c.persona ? answered() + 1 : ended + 1;
+      const want = ended + 1;
       send({ t: "chat", agent, text, view: c.view === "ws:csv" ? "w:" + csv(desk)?.ref : "home", selection: point });
       const until = Date.now() + TURN_TIMEOUT;
-      const got = () => (c.persona ? answered() : ended);
-      while (got() < want && Date.now() < until) await sleep(250);
-      if (got() < want) { res.note = "timed out"; break; }
+      while (ended < want && Date.now() < until) await sleep(250);
+      if (ended < want) { res.note = "timed out"; break; }
       await sleep(300);
     }
     const l = desk.desk.layouts.home;
     res.tools = msgs.filter((m) => m.role === "tool").map((m) => (m.error ? "✗" : "") + m.tool);
     res.errors = msgs.filter((m) => m.role === "tool" && m.error).length;
     const said = msgs.filter((m) => m.role === (c.persona ? "persona" : "agent")).map((m) => m.text).join(" ").replace(/\s+/g, " ").trim();
-    res.reply = said.slice(0, c.persona ? 400 : 160);
-    if (c.persona && msgs.some((m) => m.role === "agent")) res.note = "the chat's own agent answered an @ message";
+    const owner = msgs.filter((m) => m.role === "agent").map((m) => m.text).join("\n").trim();
+    const persona = {}; for (const m of msgs) if (m.role === "persona" && m.done && !m.error) persona[m.author] = m.text;
+    const x = { owner, persona, msgs };
+    res.reply = c.persona ? said.slice(0, 400) : [...Object.entries(persona).map(([k, v]) => `[@${k}] ${v.replace(/\s+/g, " ").slice(0, 120)}`), owner.replace(/\s+/g, " ").slice(0, 200)].join(" | ");
     await sleep(300); // the customizer settles its draft when the turn ends
-    res.ok = !res.note && !!c.check(desk.desk.layouts.home, before, said, desk, res.tools.map((t) => t.replace("✗", "")));
+    res.ok = !res.note && !!c.check(desk.desk.layouts.home, before, said, desk, res.tools.map((t) => t.replace("✗", "")), x);
     if (!res.ok && !res.note) res.note = `layout: cols ${l.cols}, ${l.tiling}, ${(l.widgets || []).map((w) => `${w.kind}(${w.shape}${w.scope ? " " + w.scope : ""}${w.h ? " h" + w.h : ""})`).join(", ")}`;
     ws.close();
   } catch (e) { res.note = String(e); }

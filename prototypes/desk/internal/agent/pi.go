@@ -31,6 +31,7 @@ type PiConfig struct {
 	SystemExtra  string
 	BuiltinTools string // "" = none; e.g. "read" to allow pi's read tool
 	Continue     bool   // resume the latest session in SessionDir (the agent keeps its memory across restarts)
+	Fork         string // start as a copy of this session file (a side session); overrides Continue
 	Env          []string
 	WireLog      string // append every line sent/received (for leak checks)
 }
@@ -65,7 +66,9 @@ func (p *Pi) Start(ctx context.Context) error {
 	args := []string{"--mode", "rpc", "--no-context-files", "--no-skills", "--no-prompt-templates", "--no-extensions"}
 	if p.cfg.SessionDir != "" {
 		args = append(args, "--session-dir", p.cfg.SessionDir)
-		if p.cfg.Continue {
+		if p.cfg.Fork != "" {
+			args = append(args, "--fork", p.cfg.Fork)
+		} else if p.cfg.Continue {
 			args = append(args, "--continue")
 		}
 	} else {

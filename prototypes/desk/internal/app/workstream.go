@@ -465,7 +465,7 @@ func (a *App) workstreamTools() []Tool {
 				return fmt.Sprintf("workstream %q:\n", w.Title) + transcriptWindow(a.chatOf(workstreamID(w.Ref)), sArg(m, "query"), iArg(m, "from", 0), iArg(m, "count", 20)), nil
 			}},
 		{Name: "ws_ask", Label: "Ask about a workstream", Kinds: HP,
-			Description: "Ask a question about a workstream (\"where does it stand?\", \"why did it pick Postgres?\"). A reader with its whole conversation answers in a few lines; the workstream itself isn't disturbed. Takes up to a minute or two.",
+			Description: "Ask a workstream's agent a question (\"where does it stand?\", \"why did it pick Postgres?\"). It answers from a side session, so its work isn't interrupted, and it remembers being asked. Takes up to a minute or two. ask_agents does the same for several agents at once.",
 			Parameters:  obj([]string{"item", "question"}, map[string]any{"item": item, "question": sprop("what you want to know")}),
 			run: func(a *App, c *Ctx, m map[string]any) (string, error) {
 				w, err := find(c, m)
@@ -476,11 +476,11 @@ func (a *App) workstreamTools() []Tool {
 				if len(msgs) == 0 {
 					return fmt.Sprintf("%q has no conversation yet. Its brief, done-when and tasks are what there is (work_tasks item=%s).", w.Title, w.Ref), nil
 				}
-				ans, err := a.askReader(w.Project, w.Title, msgs, sArg(m, "question"), c.Run.label())
+				ans, err := a.forkAnswer(c.Run, Target{Handle: slug(w.Title, 3), Name: w.Title, Kind: "workstream", Agent: workstreamID(w.Ref), Project: w.Project}, sArg(m, "question"), "the "+c.Run.label())
 				if err != nil {
 					return "", err
 				}
-				return fmt.Sprintf("About %q (from its conversation):\n%s", w.Title, ans), nil
+				return fmt.Sprintf("%q answered (from a side session):\n%s", w.Title, ans), nil
 			}},
 		{Name: "ws_message", Label: "Message a workstream", Kinds: HP,
 			Description: "Tell a workstream's agent something, or ask it to do something. If it's mid-turn, your message waits until the turn ends (the user can interrupt). Its reply is in its own conversation: read it later with ws_transcript.",

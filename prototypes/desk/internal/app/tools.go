@@ -264,7 +264,7 @@ func (a *App) tools() []Tool {
 }
 
 func (a *App) allTools() []Tool {
-	return append(append(append(append(append(append(append(append(a.tools(), a.wikiTools()...), a.codeTools()...), a.homeTools()...), a.workTools()...), a.onboardTools()...), a.workstreamTools()...), a.episodeTools()...), a.personaToolset()...)
+	return append(append(append(append(append(append(append(append(append(append(a.tools(), a.wikiTools()...), a.codeTools()...), a.homeTools()...), a.workTools()...), a.onboardTools()...), a.workstreamTools()...), a.episodeTools()...), a.personaToolset()...), a.mentionTools()...), a.styleTools()...)
 }
 
 // toolsFor is the tool set of one agent: by its kind, plus add-on tools
@@ -272,14 +272,14 @@ func (a *App) allTools() []Tool {
 func (a *App) toolsFor(r *Run) []Tool {
 	var out []Tool
 	kind := toolKind(r.Kind)
-	if r.Kind == KindPersona { // a persona reads what the chat's agent could, and changes nothing
+	if r.Kind == KindPersona || r.Kind == KindFork { // a persona or side session reads, and changes nothing
 		kind = r.base()
 	}
 	for _, t := range a.allTools() {
 		if t.Addon != "" && (r.Project == "" || !a.addonOn(r.Project, t.Addon)) {
 			continue
 		}
-		if r.Kind == KindPersona && !personaTools[t.Name] {
+		if (r.Kind == KindPersona || r.Kind == KindFork) && !personaTools[t.Name] {
 			continue
 		}
 		for _, k := range t.Kinds {
@@ -306,7 +306,7 @@ func (a *App) toolByName(name string) (Tool, bool) {
 
 func (a *App) ctxFor(r *Run) *Ctx {
 	c := &Ctx{Run: r, Kind: toolKind(r.Kind), Actor: r.label()}
-	if r.Kind == KindPersona {
+	if r.Kind == KindPersona || r.Kind == KindFork {
 		c.Kind = r.base()
 	}
 	if p, ok := a.Projects.Get(r.Project); ok {

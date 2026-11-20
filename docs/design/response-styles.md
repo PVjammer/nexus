@@ -1,6 +1,6 @@
 # Response styles
 
-*Proposed 2026-11-20. Not a fixed feature: a way to configure how agents write and how their messages render, e.g. a "tl;dr mode".*
+*Proposed 2026-11-20; steps 1 to 4 built the same day on branch `personas`. Not a fixed feature: a way to configure how agents write and how their messages render, e.g. a "tl;dr mode".*
 
 ## The idea
 
@@ -42,3 +42,9 @@ JSON is still right for typed answers the app acts on (proposals, question cards
 2. `style_write` and the skill, so you can make and change styles by asking.
 3. The `verdict` rule, with the critic switched over to it.
 4. Summary-only handoffs between agents.
+
+*Built 2026-11-20.* Differences from the above:
+- **The style is repeated after your message.** On local Qwen, a style note above the message was forgotten after a few tool calls (the tl;dr eval passed about one run in three). Repeating the instruction after your message made it pass every time.
+- **The tl;dr goes on the final answer,** after any tool calls. The model was writing it in the preamble before them.
+- **Handoffs:** asides and cross-posts carry the summary. The owner's turn after a join gets every reply in full, because it has to act on them.
+- **tl;dr ships switched off.** Ask home to turn it on ("turn on tl;dr mode for my project chats"). The critic's verdict badge ships on.

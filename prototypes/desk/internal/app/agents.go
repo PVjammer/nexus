@@ -46,6 +46,9 @@ type RunSpec struct {
 	// Base: run on this kind's loop and model (a persona runs on the
 	// one of the chat it was called into).
 	Base string
+	// ForkOf: start as a copy of this agent's session, from its last
+	// finished turn (a side session that answers one question).
+	ForkOf string
 }
 
 // AgentFactory starts agent loops. pi is the prototype implementation; a
@@ -65,7 +68,9 @@ type ChatMsg struct {
 	Result string `json:"result,omitempty"`
 	Error  bool   `json:"error,omitempty"`
 	Done   bool   `json:"done,omitempty"`
-	Author string `json:"author,omitempty"` // a persona's handle (role "persona")
+	Author string `json:"author,omitempty"` // who answered a mention: a handle (role "persona"), or who was asked (role "ask")
+	From   string `json:"from,omitempty"`   // the agent behind Author, when it's an agent ("w:<ref>", "p:<id>")
+	Late   bool   `json:"late,omitempty"`   // a reply that came after the chat's agent went ahead without it
 	TS     int64  `json:"ts"`
 }
 
@@ -119,6 +124,13 @@ type Run struct {
 	// without this agent (personas called in), for its next turn.
 	persona *Persona
 	aside   []ChatMsg
+	// join: the agents this chat's last message mentioned, while their
+	// replies come in. forkOf/trunkKind: a side session's original.
+	// askRounds: ask_agents rounds used this turn.
+	join      *joinState
+	forkOf    string
+	trunkKind string
+	askRounds int
 }
 
 func newToken() string {
@@ -156,6 +168,8 @@ func (a *App) run(id string) (*Run, error) {
 		r.Kind = KindAsk
 	case strings.HasPrefix(id, "persona:"):
 		r.Kind = KindPersona
+	case strings.HasPrefix(id, "fork:"):
+		r.Kind = KindFork
 	case strings.HasPrefix(id, "t:"):
 		t, ok := a.Desk.Task(id[2:])
 		if !ok {
@@ -216,6 +230,8 @@ func (r *Run) label() string {
 		return "workstream agent (" + truncate(r.Title, 40) + ")"
 	case KindAsk:
 		return "reader"
+	case KindFork:
+		return "side session of the " + r.Title
 	case KindPersona:
 		if r.persona != nil {
 			return "@" + r.persona.Handle
@@ -239,7 +255,7 @@ func (r *Run) ensureStarted() error {
 	if p, ok := r.a.Projects.Get(r.Project); ok {
 		wd = p.Path
 	}
-	be, err := r.a.cfg.Agents.Start(context.Background(), RunSpec{ID: r.ID, Kind: r.Kind, Token: r.Token, WorkDir: wd, Instructions: r.a.instructionsForRun(r), Fresh: r.fresh, Private: r.a.walled("", r.Project), Model: r.personaModel(), Base: r.base()})
+	be, err := r.a.cfg.Agents.Start(context.Background(), RunSpec{ID: r.ID, Kind: r.Kind, Token: r.Token, WorkDir: wd, Instructions: r.a.instructionsForRun(r), Fresh: r.fresh, Private: r.a.walled("", r.Project), Model: r.personaModel(), Base: r.base(), ForkOf: r.forkOf})
 	if err != nil {
 		return err
 	}
@@ -265,12 +281,20 @@ func (r *Run) add(m ChatMsg) ChatMsg {
 		r.chat = r.chat[len(r.chat)-400:]
 	}
 	r.mu.Unlock()
-	if r.Kind == KindAsk || r.Kind == KindPersona { // a throwaway reader: nobody sees it, nothing is kept
+	if ephemeral(r.Kind) { // a throwaway reader: nobody sees it, nothing is kept
 		return m
 	}
 	r.a.broadcast(map[string]any{"t": "chat", "agent": r.ID, "msg": m})
 	r.persistSoon()
 	return m
+}
+
+// streaming: the transcript's last message is an open stream of this role.
+func (r *Run) streaming(role string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	n := len(r.chat)
+	return n > 0 && r.chat[n-1].Role == role && !r.chat[n-1].Done
 }
 
 func (r *Run) appendStream(role, text string) {
@@ -289,8 +313,8 @@ func (r *Run) appendStream(role, text string) {
 
 func (r *Run) closeStream() {
 	r.mu.Lock()
-	if n := len(r.chat); n > 0 {
-		r.chat[n-1].Done = true
+	if n := len(r.chat); n > 0 && r.chat[n-1].Role != "persona" {
+		r.chat[n-1].Done = true // a mentioned agent's reply still coming in isn't done
 	}
 	r.mu.Unlock()
 	r.persistSoon()
@@ -355,7 +379,7 @@ func (r *Run) persistSoon() {
 }
 
 func (r *Run) persist() {
-	if r.Kind == KindAsk || r.Kind == KindPersona {
+	if ephemeral(r.Kind) {
 		return
 	}
 	r.mu.Lock()
@@ -400,16 +424,28 @@ func (r *Run) lastAgentText() string {
 func (r *Run) Say(shown, context string) error { return r.sayAs("you", shown, context) }
 
 // sayAs is Say with the transcript role: "you" for what you typed, "app"
-// for prompts the app generated on your behalf.
-func (r *Run) sayAs(role, shown, context string) error {
+// for prompts the app generated on your behalf, "" for a prompt that isn't
+// shown (the chat already shows what it's about). What was said in the
+// chat without this agent (the aside) goes first, whichever way the turn
+// starts.
+func (r *Run) sayAs(role, shown, context string) error { return r.sayWith(role, shown, context, "") }
+
+// sayWith is sayAs with a tail: text the model gets after the message (a
+// reminder small models need last, like the reply style), not shown.
+func (r *Run) sayWith(role, shown, context, tail string) error {
 	shown = strings.TrimSpace(shown)
 	if shown == "" {
 		return nil
 	}
+	if as := r.takeAside(); as != "" {
+		context = strings.TrimSpace(as + "\n" + context)
+	}
 	r.closeStream()
 	r.newTurn()
 	_, wasAsked := r.pendingQuestion()
-	r.add(ChatMsg{Role: role, Text: shown})
+	if role != "" {
+		r.add(ChatMsg{Role: role, Text: shown})
+	}
 	if wasAsked {
 		r.a.broadcastDesk() // the question leaves Needs you
 	}
@@ -420,6 +456,9 @@ func (r *Run) sayAs(role, shown, context string) error {
 	msg := shown
 	if context != "" {
 		msg = context + "\n\n" + shown
+	}
+	if tail != "" {
+		msg += "\n\n" + tail
 	}
 	r.setBusy(true)
 	if err := r.be.Prompt(context2(), msg); err != nil {
@@ -449,6 +488,7 @@ func (r *Run) newTurn() {
 	r.mu.Lock()
 	r.asked = ""
 	r.batches = nil
+	r.askRounds = 0
 	r.mu.Unlock()
 }
 
@@ -478,6 +518,9 @@ func (r *Run) pump() {
 		case agent.EventDelta:
 			r.appendStream("agent", ev.Text)
 		case agent.EventThinking:
+			if strings.TrimSpace(ev.Text) == "" && r.streaming("agent") {
+				break // a stray blank reasoning chunk mid-answer (local Qwen) would split the answer in two
+			}
 			r.appendStream("thinking", ev.Text)
 		case agent.EventToolDraft:
 			// Big tool calls (a whole HTML page) can take minutes on a local
