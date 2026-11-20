@@ -760,3 +760,19 @@ details.episode[open] > summary::before { content: "▾ "; }
 .is-private { background-image: linear-gradient(var(--private-weak), var(--private-weak)); }
 .private-switch b { color: var(--private); }
 .tcard.tone-you { box-shadow: inset 3px 0 0 var(--tone-you); } .tcard.tone-agent { box-shadow: inset 3px 0 0 var(--tone-agent); } .tcard.tone-wait { box-shadow: inset 3px 0 0 var(--tone-wait); } .tcard.tone-blocked { box-shadow: inset 3px 0 0 var(--tone-blocked); }
+
+/* ---- personas: voices called in with @handle ---- */
+.msg.persona { --pc: var(--agent); border-left: 3px solid var(--pc); background: color-mix(in srgb, var(--pc) 7%, transparent);
+  border-radius: 0 8px 8px 0; padding: 6px 10px; }
+.msg.persona .persona-who { font-size: 12px; margin-bottom: 2px; }
+.msg.persona .persona-who b { color: var(--pc); }
+.msg.persona .persona-body p { margin: .3em 0; }
+.msg.persona .persona-body.error { color: var(--muted); font-size: 12px; }
+.chat-form, .mini-form { position: relative; }
+.mention-menu { position: absolute; bottom: calc(100% - 4px); left: 10px; right: 10px; z-index: 60; display: flex; flex-direction: column;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 6px 20px rgba(0,0,0,.15); padding: 4px; }
+.mention-menu[hidden] { display: none; }
+.mention { --pc: var(--agent); text-align: left; border: 0; background: none; padding: 5px 8px; border-radius: 6px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mention b { color: var(--pc); }
+.mention.on, .mention:hover { background: var(--panel-2); }

@@ -41,6 +41,11 @@ type RunSpec struct {
 	// a local model (a remote provider is a way out). Factories that can't
 	// promise that refuse.
 	Private bool
+	// Model overrides the kind's model (a persona with its own).
+	Model string
+	// Base: run on this kind's loop and model (a persona runs on the
+	// one of the chat it was called into).
+	Base string
 }
 
 // AgentFactory starts agent loops. pi is the prototype implementation; a
@@ -60,6 +65,7 @@ type ChatMsg struct {
 	Result string `json:"result,omitempty"`
 	Error  bool   `json:"error,omitempty"`
 	Done   bool   `json:"done,omitempty"`
+	Author string `json:"author,omitempty"` // a persona's handle (role "persona")
 	TS     int64  `json:"ts"`
 }
 
@@ -109,6 +115,10 @@ type Run struct {
 	// the next start begins a new model session (episodes.go).
 	wantEnd string
 	fresh   bool
+	// persona: who a persona run is; aside: what was said in this chat
+	// without this agent (personas called in), for its next turn.
+	persona *Persona
+	aside   []ChatMsg
 }
 
 func newToken() string {
@@ -144,6 +154,8 @@ func (a *App) run(id string) (*Run, error) {
 		r.Kind, r.Project, r.Item, r.Title = KindWorkstream, w.Project, w.Ref, w.Title
 	case strings.HasPrefix(id, "ask:"):
 		r.Kind = KindAsk
+	case strings.HasPrefix(id, "persona:"):
+		r.Kind = KindPersona
 	case strings.HasPrefix(id, "t:"):
 		t, ok := a.Desk.Task(id[2:])
 		if !ok {
@@ -204,6 +216,11 @@ func (r *Run) label() string {
 		return "workstream agent (" + truncate(r.Title, 40) + ")"
 	case KindAsk:
 		return "reader"
+	case KindPersona:
+		if r.persona != nil {
+			return "@" + r.persona.Handle
+		}
+		return "persona"
 	default:
 		return "task agent (" + r.Task + ")"
 	}
@@ -222,7 +239,7 @@ func (r *Run) ensureStarted() error {
 	if p, ok := r.a.Projects.Get(r.Project); ok {
 		wd = p.Path
 	}
-	be, err := r.a.cfg.Agents.Start(context.Background(), RunSpec{ID: r.ID, Kind: r.Kind, Token: r.Token, WorkDir: wd, Instructions: r.a.instructionsFor(r.Kind), Fresh: r.fresh, Private: r.a.walled("", r.Project)})
+	be, err := r.a.cfg.Agents.Start(context.Background(), RunSpec{ID: r.ID, Kind: r.Kind, Token: r.Token, WorkDir: wd, Instructions: r.a.instructionsForRun(r), Fresh: r.fresh, Private: r.a.walled("", r.Project), Model: r.personaModel(), Base: r.base()})
 	if err != nil {
 		return err
 	}
@@ -248,7 +265,7 @@ func (r *Run) add(m ChatMsg) ChatMsg {
 		r.chat = r.chat[len(r.chat)-400:]
 	}
 	r.mu.Unlock()
-	if r.Kind == KindAsk { // a throwaway reader: nobody sees it, nothing is kept
+	if r.Kind == KindAsk || r.Kind == KindPersona { // a throwaway reader: nobody sees it, nothing is kept
 		return m
 	}
 	r.a.broadcast(map[string]any{"t": "chat", "agent": r.ID, "msg": m})
@@ -338,7 +355,7 @@ func (r *Run) persistSoon() {
 }
 
 func (r *Run) persist() {
-	if r.Kind == KindAsk {
+	if r.Kind == KindAsk || r.Kind == KindPersona {
 		return
 	}
 	r.mu.Lock()

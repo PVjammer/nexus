@@ -23,8 +23,16 @@ func (a *App) Chat(agentID, text, selection, view string) {
 			a.Desk.UpdateTask(t.ID, func(t *desk.Task) error { t.Status = "running"; return nil })
 		}
 	}
+	if ps := a.mentioned(text); len(ps) > 0 && r.Kind != KindPersona { // "@critic, what do you think?"
+		a.callPersonas(r, ps, text, selection, view)
+		return
+	}
 	a.maybeEndEpisode(r, true) // coming back to a settled conversation after a while: start fresh
-	r.Say(text, a.contextFor(r, selection, view))
+	ctx := a.contextFor(r, selection, view)
+	if as := r.takeAside(); as != "" {
+		ctx = as + "\n" + ctx
+	}
+	r.Say(text, ctx)
 }
 
 // viewProject is the project a view string points at ("w:<ref>", "project

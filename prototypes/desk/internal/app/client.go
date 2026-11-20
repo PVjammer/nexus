@@ -270,13 +270,16 @@ func (a *App) handleClient(c *client, m map[string]any, raw []byte) {
 				found = &x
 			}
 		}
-		if on && (found == nil || (found.Role != "you" && found.Role != "agent" && found.Role != "app")) {
+		if on && (found == nil || (found.Role != "you" && found.Role != "agent" && found.Role != "app" && found.Role != "persona")) {
 			fail(fixErr("only messages can be pinned"))
 			break
 		}
 		p := desk.Pin{Msg: id}
 		if found != nil {
 			p.Role, p.Text = found.Role, truncate(found.Text, 2000)
+			if found.Role == "persona" {
+				p.Text = "@" + found.Author + ": " + p.Text
+			}
 		}
 		a.Desk.SetPin(str(m["agent"]), p, on)
 		a.broadcastDesk()

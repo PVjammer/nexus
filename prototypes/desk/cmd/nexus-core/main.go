@@ -71,7 +71,7 @@ func (f piFactory) Start(ctx context.Context, s app.RunSpec) (agent.Backend, err
 	}
 	p := agent.NewPi(agent.PiConfig{
 		Continue: len(prior) > 0, // an agent that was stopped picks up where it left off
-		Binary:   f.bin, Model: f.modelFor(s.Kind), Extension: f.ext,
+		Binary:   f.bin, Model: or(s.Model, f.modelFor(loopKind(s))), Extension: f.ext,
 		SystemExtra:  sys,
 		SessionDir:   sessDir,
 		WorkDir:      s.WorkDir,
@@ -170,7 +170,7 @@ func (f claudeFactory) Start(ctx context.Context, s app.RunSpec) (agent.Backend,
 	}
 	os.MkdirAll(filepath.Join(f.dataDir, "agent-wire"), 0o700)
 	c := agent.NewClaude(agent.ClaudeConfig{
-		Binary: f.bin, Model: f.modelFor(s.Kind), SystemFile: sys, MCPConfig: mcp,
+		Binary: f.bin, Model: or(s.Model, f.modelFor(loopKind(s))), SystemFile: sys, MCPConfig: mcp,
 		SessionID: sid, Resume: resume, WorkDir: cwd,
 		WireLog: filepath.Join(f.dataDir, "agent-wire", "claude-"+safe+".log"),
 	})
@@ -178,6 +178,21 @@ func (f claudeFactory) Start(ctx context.Context, s app.RunSpec) (agent.Backend,
 		return nil, err
 	}
 	return c, nil
+}
+
+// loopKind: whose loop and model an agent runs on.
+func loopKind(s app.RunSpec) string {
+	if s.Base != "" {
+		return s.Base
+	}
+	return baseKind(s.Kind)
+}
+
+func or(a, b string) string {
+	if a != "" {
+		return a
+	}
+	return b
 }
 
 func newUUID() string {
@@ -195,7 +210,7 @@ func baseKind(kind string) string {
 	switch kind {
 	case app.KindCustomizer:
 		return app.KindHome
-	case app.KindWorkstream, app.KindAsk:
+	case app.KindWorkstream, app.KindAsk, app.KindPersona:
 		return app.KindProject
 	}
 	return kind
@@ -218,7 +233,7 @@ type mixFactory struct {
 }
 
 func (m mixFactory) Start(ctx context.Context, s app.RunSpec) (agent.Backend, error) {
-	f := m.byKind[baseKind(s.Kind)]
+	f := m.byKind[loopKind(s)]
 	if f == nil {
 		return nil, fmt.Errorf("no agent loop for %s agents", s.Kind)
 	}
@@ -251,6 +266,7 @@ func main() {
 	dataDir := flag.String("data", filepath.Join(home, ".local", "share", "nexus-desk"), "data directory")
 	webDir := flag.String("web", "web", "web assets directory")
 	skillsDir := flag.String("skills", "skills", "agent skills directory (SKILL.md per skill)")
+	personasDir := flag.String("personas", "personas", "shipped personas directory (<handle>.md each); yours are in <data>/personas")
 	agentKind := flag.String("agent", "pi", "agent loop for every agent: pi | claude | none")
 	agentHome := flag.String("agent-home", "", "agent loop for the home agent (overrides -agent): pi | claude")
 	agentProject := flag.String("agent-project", "", "agent loop for project agents: pi | claude")
@@ -281,7 +297,7 @@ func main() {
 	v, err := vault.Open(*vaultPath)
 	must(err)
 
-	cfg := app.Config{DataDir: *dataDir, WebDir: *webDir, SkillsDir: *skillsDir, Token: token, ScanRoots: scan, TestHooks: *testHooks, Foreman: *foreman}
+	cfg := app.Config{DataDir: *dataDir, WebDir: *webDir, SkillsDir: *skillsDir, PersonasDir: *personasDir, Token: token, ScanRoots: scan, TestHooks: *testHooks, Foreman: *foreman}
 	if *agentKind != "none" || *agentHome != "" || *agentProject != "" || *agentTask != "" {
 		ext, _ := filepath.Abs("pi/nexus-tools.ts")
 		piDir, _ := filepath.Abs("pi")

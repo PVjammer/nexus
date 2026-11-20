@@ -34,13 +34,14 @@ import (
 )
 
 type Config struct {
-	DataDir   string
-	WebDir    string
-	SkillsDir string   // agent skills (default "skills")
-	Token     string   // the shell's websocket token
-	ScanRoots []string // where onboarding looks for projects
-	Agents    AgentFactory
-	TestHooks bool // e2e only: lets a test act as an agent without a model
+	DataDir     string
+	WebDir      string
+	SkillsDir   string   // agent skills (default "skills")
+	PersonasDir string   // shipped personas (default "personas")
+	Token       string   // the shell's websocket token
+	ScanRoots   []string // where onboarding looks for projects
+	Agents      AgentFactory
+	TestHooks   bool // e2e only: lets a test act as an agent without a model
 	// Foreman: read foreman ledgers (workstreams, backlog, inbox) by default
 	// in projects that have one. Off by default: Nexus doesn't assume any
 	// particular tool; a project can still switch the add-on on.

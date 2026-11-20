@@ -56,7 +56,8 @@ func TestPrivateProjectWall(t *testing.T) {
 		{"path": "beta/zebra.md"}, {"path": "beta"}, {"page": "index", "project": "beta"}, {"all": true}, {"include_done": true},
 		{"text": "x", "item": ref}, {"question": "x", "item": ref}, {"name": zebra},
 	}
-	outsiders := []string{"home", customizerID, "p:alpha", workstreamID(alphaRef), alphaTask}
+	a.cfg.PersonasDir = "../../personas"
+	outsiders := []string{"home", customizerID, "p:alpha", workstreamID(alphaRef), alphaTask, "persona:critic:home"}
 	for _, id := range outsiders {
 		r, err := a.run(id)
 		if err != nil {

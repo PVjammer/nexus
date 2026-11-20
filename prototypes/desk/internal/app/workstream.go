@@ -272,7 +272,7 @@ func (a *App) askReader(project, title string, msgs []ChatMsg, question, from st
 	case <-time.After(4 * time.Minute):
 		return "", fmt.Errorf("the reader took too long; use ws_transcript")
 	}
-	ans := strings.TrimSpace(r.lastAgentText())
+	ans := r.finalText()
 	if ans == "" {
 		return "", fmt.Errorf("the reader gave no answer; use ws_transcript")
 	}

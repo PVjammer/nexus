@@ -264,19 +264,26 @@ func (a *App) tools() []Tool {
 }
 
 func (a *App) allTools() []Tool {
-	return append(append(append(append(append(append(append(a.tools(), a.wikiTools()...), a.codeTools()...), a.homeTools()...), a.workTools()...), a.onboardTools()...), a.workstreamTools()...), a.episodeTools()...)
+	return append(append(append(append(append(append(append(append(a.tools(), a.wikiTools()...), a.codeTools()...), a.homeTools()...), a.workTools()...), a.onboardTools()...), a.workstreamTools()...), a.episodeTools()...), a.personaToolset()...)
 }
 
 // toolsFor is the tool set of one agent: by its kind, plus add-on tools
 // switched on for its project.
 func (a *App) toolsFor(r *Run) []Tool {
 	var out []Tool
+	kind := toolKind(r.Kind)
+	if r.Kind == KindPersona { // a persona reads what the chat's agent could, and changes nothing
+		kind = r.base()
+	}
 	for _, t := range a.allTools() {
 		if t.Addon != "" && (r.Project == "" || !a.addonOn(r.Project, t.Addon)) {
 			continue
 		}
+		if r.Kind == KindPersona && !personaTools[t.Name] {
+			continue
+		}
 		for _, k := range t.Kinds {
-			if k == toolKind(r.Kind) {
+			if k == kind {
 				out = append(out, t)
 				break
 			}
@@ -299,6 +306,9 @@ func (a *App) toolByName(name string) (Tool, bool) {
 
 func (a *App) ctxFor(r *Run) *Ctx {
 	c := &Ctx{Run: r, Kind: toolKind(r.Kind), Actor: r.label()}
+	if r.Kind == KindPersona {
+		c.Kind = r.base()
+	}
 	if p, ok := a.Projects.Get(r.Project); ok {
 		c.Project, c.Space = p, p.Space
 	}

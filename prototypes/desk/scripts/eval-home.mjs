@@ -72,6 +72,11 @@ const cases = [
     check: (l, b, r, d) => wt(d).some((t) => t.item === csv(d)?.ref && /review/i.test(t.title)), why: "\"here\" is the workstream the quick window was opened from" },
   { name: "episode-close", start: "prompt", say: ["Add a todo: buy printer ink."],
     check: (l, b, r, d, tools) => wt(d).some((t) => !t.item && /ink/i.test(t.title)) && tools.includes("episode_close"), why: "a request done is an episode done: it says so with a summary" },
+  // personas: "@critic" answers in the chat's place, in its brief's voice; it finds a real flaw and doesn't invent one
+  { name: "critic-flaw", persona: true, start: "prompt", say: ["Plan for the CSV export: I'll query the production database directly from the export button, skip tests since it's small, and ship it Friday. @critic, thoughts?"],
+    check: (l, b, r, d) => /prod|test|direct/i.test(r) && !/holds up/i.test(r.slice(0, 80)), why: "the critic names a planted flaw (the production DB, no tests) and doesn't pass it" },
+  { name: "critic-fine", persona: true, start: "prompt", say: ["Plan: add a Download CSV button to the orders admin page. It exports the current filtered view from the read replica, streams rows so big exports don't time out, caps at 100k rows with a message when it hits the cap, and has a unit test for the column mapping. Finance has signed off on the columns. @critic, anything wrong with this?"],
+    check: (l, b, r, d) => /holds up/i.test(r.slice(0, 80)), why: "a sound plan gets \"This holds up.\", not invented problems" },
   // the customizer: small changes apply at once, builds wait for Keep
   { name: "eitri-small", agent: "customizer", start: "dashboard", say: ["Make the needs list compact."],
     check: (l, b, r, d) => find(l, "needs")?.shape === "compact" && d.customizer?.state === "idle", why: "a small change goes live when the turn ends" },
@@ -127,20 +132,24 @@ for (const c of cases) {
     await sleep(400);
     const before = JSON.parse(JSON.stringify(desk.desk.layouts.home));
     const point = c.point ? find(before, c.point)?.id || "" : "";
+    const answered = () => msgs.filter((m) => m.role === "persona" && m.done).length;
     for (const text of c.say) {
-      const want = ended + 1;
+      const want = c.persona ? answered() + 1 : ended + 1;
       send({ t: "chat", agent, text, view: c.view === "ws:csv" ? "w:" + csv(desk)?.ref : "home", selection: point });
       const until = Date.now() + TURN_TIMEOUT;
-      while (ended < want && Date.now() < until) await sleep(250);
-      if (ended < want) { res.note = "timed out"; break; }
+      const got = () => (c.persona ? answered() : ended);
+      while (got() < want && Date.now() < until) await sleep(250);
+      if (got() < want) { res.note = "timed out"; break; }
       await sleep(300);
     }
     const l = desk.desk.layouts.home;
     res.tools = msgs.filter((m) => m.role === "tool").map((m) => (m.error ? "✗" : "") + m.tool);
     res.errors = msgs.filter((m) => m.role === "tool" && m.error).length;
-    res.reply = msgs.filter((m) => m.role === "agent").map((m) => m.text).join(" ").replace(/\s+/g, " ").slice(0, 160);
+    const said = msgs.filter((m) => m.role === (c.persona ? "persona" : "agent")).map((m) => m.text).join(" ").replace(/\s+/g, " ").trim();
+    res.reply = said.slice(0, c.persona ? 400 : 160);
+    if (c.persona && msgs.some((m) => m.role === "agent")) res.note = "the chat's own agent answered an @ message";
     await sleep(300); // the customizer settles its draft when the turn ends
-    res.ok = !res.note && !!c.check(desk.desk.layouts.home, before, res.reply, desk, res.tools.map((t) => t.replace("✗", "")));
+    res.ok = !res.note && !!c.check(desk.desk.layouts.home, before, said, desk, res.tools.map((t) => t.replace("✗", "")));
     if (!res.ok && !res.note) res.note = `layout: cols ${l.cols}, ${l.tiling}, ${(l.widgets || []).map((w) => `${w.kind}(${w.shape}${w.scope ? " " + w.scope : ""}${w.h ? " h" + w.h : ""})`).join(", ")}`;
     ws.close();
   } catch (e) { res.note = String(e); }

@@ -4,8 +4,9 @@
 import { desk, h, on, send } from "./core";
 import { md } from "./md";
 import { proposalChecklist } from "./work";
+import { attachMentions, personaMsg } from "./personas";
 
-export type Msg = { id: number; role: string; text: string; tool?: string; args?: string; result?: string; error?: boolean; done?: boolean; callId?: string };
+export type Msg = { id: number; role: string; text: string; tool?: string; args?: string; result?: string; error?: boolean; done?: boolean; callId?: string; author?: string };
 
 const transcripts = new Map<string, Msg[]>();
 const busy = new Map<string, boolean>();
@@ -103,6 +104,7 @@ function renderMsg(m: Msg, agent = "", context?: () => { view?: string; selectio
     return el;
   }
   if (m.role === "agent") return h("div", { class: "msg agent", html: md(m.text) });
+  if (m.role === "persona") return personaMsg(m);
   if (m.role === "thinking") {
     const el = h("div", { class: "msg thinking", title: "Model reasoning (click to expand)", onclick: () => el.classList.toggle("open") }, m.text);
     return el;
@@ -144,6 +146,7 @@ export class MiniChat {
     const sendBtn = h("button", { type: "submit", class: "primary" }, "Ask");
     const form = h("form", { class: "mini-form" }, this.input, sendBtn);
     form.addEventListener("submit", (e) => { e.preventDefault(); this.submit(); });
+    attachMentions(this.input);
     this.input.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); this.submit(); } });
     this.input.addEventListener("input", () => { this.input.rows = Math.min(6, Math.max(1, this.input.value.split("\n").length)); });
     this.out = h("div", { class: "mini-out" });
@@ -182,6 +185,7 @@ export class MiniChat {
       if (m.role === "you") kids.push(h("div", { class: "msg you" }, m.text));
       else if (m.role === "app") continue;
       else if (m.role === "agent" && m.text.trim()) kids.push(h("div", { class: "msg agent", html: md(m.text) }));
+      else if (m.role === "persona") kids.push(personaMsg(m));
       else if (m.role === "tool" && m.tool === "ask_user" && !m.error) kids.push(questionCard(this.agent, m, this.opts.context));
       else if (m.role === "tool" && m.tool === "work_propose" && m.done && !m.error && proposeCard(m)) kids.push(proposeCard(m)!);
       else if (m.role === "tool") tools.push((m.error ? "⚠ " : "") + (toolLabels[m.tool || ""] || m.tool || "tool"));
@@ -190,7 +194,7 @@ export class MiniChat {
     if (tools.length) kids.splice(1, 0, h("div", { class: "mini-tools muted small" }, "Did: " + tools.join(" · ")));
     if (ended) kids.push(h("div", { class: "episode-div" }, h("span", {}, "Saved · " + ended.text)));
     if (isBusy(this.agent)) kids.push(h("div", { class: "muted small" }, h("span", { class: "busy-dot" }), " working…", h("button", { type: "button", class: "link", onclick: () => send({ t: "abort", agent: this.agent }) }, "Stop")));
-    const talk = (l: Msg[]) => l.filter((m) => m.role === "you" || m.role === "agent").length;
+    const talk = (l: Msg[]) => l.filter((m) => m.role === "you" || m.role === "agent" || m.role === "persona").length;
     if (talk(msgs) > talk(last)) kids.push(h("button", { type: "button", class: "link small", onclick: () => this.opts.onHistory?.() }, `Conversation history (${talk(msgs)} messages)`));
     this.out.replaceChildren(...kids);
   }
@@ -221,6 +225,7 @@ export class ChatPanel {
     const form = h("form", { class: "chat-form" }, this.input,
       h("div", { class: "chat-actions" }, this.status, this.stop, h("button", { type: "submit", class: "primary" }, "Send")));
     form.addEventListener("submit", (e) => { e.preventDefault(); this.submit(); });
+    attachMentions(this.input);
     this.input.addEventListener("keydown", (e) => {
       if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); this.submit(); }
     });
@@ -242,7 +247,7 @@ export class ChatPanel {
     const changed = agent !== this.agent;
     this.agent = agent;
     this.opts = opts;
-    this.input.placeholder = opts.placeholder || "Talk to the agent. Enter to send, Shift+Enter for a new line.";
+    this.input.placeholder = opts.placeholder || "Talk to the agent, or @ a persona. Enter to send, Shift+Enter for a new line.";
     if (changed) this.redraw();
     this.drawPins();
     this.drawCtx();
@@ -338,7 +343,7 @@ export class ChatPanel {
   /** render is renderMsg plus a pin button on what was said. */
   private render(m: Msg): HTMLElement {
     const el = renderMsg(m, this.agent, this.opts.context);
-    if ((m.role === "you" || m.role === "agent" || m.role === "app") && m.text.trim()) {
+    if ((m.role === "you" || m.role === "agent" || m.role === "app" || (m.role === "persona" && m.done && !m.error)) && m.text.trim()) {
       const on = () => this.pinned().some((p) => p.msg === m.id);
       el.classList.add("pinnable");
       el.classList.toggle("pinned", on());
